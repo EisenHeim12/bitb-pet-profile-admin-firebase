@@ -1,0 +1,7 @@
+# Firebase App Hosting (Cloud Run) config.
+# You can deploy via Firebase Console -> App Hosting by connecting a GitHub repo.
+# Keep it minimal. Tune later.
+runConfig:
+  minInstances: 0
+  maxInstances: 3
+  concurrency: 80
