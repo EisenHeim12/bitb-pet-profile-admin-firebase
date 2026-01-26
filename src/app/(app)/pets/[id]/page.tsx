@@ -555,7 +555,7 @@ export default function PetDetailPage() {
           <Link className="text-sm underline" href={client ? `/clients/${client.id}` : "/pets"}>← Back</Link>
           <h1 className="text-2xl font-semibold mt-2">{pet?.name ?? "Pet"}</h1>
           <p className="text-sm text-neutral-600 mt-1">
-            Owner: {client?.name ?? "—"} • Breed: {pet?.breed ?? "—"} • Age: {ageText} • Microchip: {pet?.microchipNo ?? "—"}
+            Pet parent: {client?.name ?? "—"} • Breed: {pet?.breed ?? "—"} • Age: {ageText} • Microchip: {pet?.microchipNo ?? "—"}
           </p>
         </div>
 
@@ -614,7 +614,7 @@ export default function PetDetailPage() {
           <div className="border rounded-2xl p-4">
             <h2 className="font-semibold">Quick info</h2>
             <div className="mt-3 space-y-2 text-sm">
-              <Row k="Sex" v={pet?.sex ?? "—"} />
+              <Row k="Gender" v={pet?.sex ?? "—"} />
               <Row k="Species" v={pet?.species ?? "Dog"} />
               <Row k="Temperament" v={pet?.temperament ?? "—"} />
               <Row k="Notes" v={pet?.notes ?? "—"} />
