@@ -161,7 +161,7 @@ export default function ClientDetailPage() {
               </Field>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <Field label="Sex">
+              <Field label="Gender">
                 <select className="w-full border rounded-lg p-2" value={form.sex} onChange={(e) => setForm({ ...form, sex: e.target.value })}>
                   <option value="">—</option>
                   <option value="Male">Male</option>

@@ -235,7 +235,7 @@ export default function PetsPage() {
             </div>
 
             <div className="grid grid-cols-2 gap-2">
-              <Field label="Sex">
+              <Field label="Gender">
                 <select
                   className="w-full border rounded-lg p-2"
                   value={form.sex}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -119,21 +119,51 @@ export default function PetDetailPage() {
   // Vaccines + parasite
   const [vaccines, setVaccines] = useState<any[]>([]);
   const [vacModal, setVacModal] = useState(false);
-  const [vacForm, setVacForm] = useState({ name: "", administeredOn: "", dueOn: "", brand: "", batchNo: "", notes: "" });
+  const [vacForm, setVacForm] = useState({
+    name: "",
+    administeredOn: "",
+    dueOn: "",
+    brand: "",
+    batchNo: "",
+    notes: "",
+  });
 
   const [parasites, setParasites] = useState<any[]>([]);
   const [parModal, setParModal] = useState(false);
-  const [parForm, setParForm] = useState({ type: "DEWORMING", product: "", administeredOn: "", dueOn: "", dose: "", notes: "" });
+  const [parForm, setParForm] = useState({
+    type: "DEWORMING",
+    product: "",
+    administeredOn: "",
+    dueOn: "",
+    dose: "",
+    notes: "",
+  });
 
   // Grooming
   const [grooming, setGrooming] = useState<any[]>([]);
   const [groomModal, setGroomModal] = useState(false);
-  const [groomForm, setGroomForm] = useState({ date: "", service: "", groomer: "", coatCondition: "", skinCondition: "", nextDueOn: "", notes: "" });
+  const [groomForm, setGroomForm] = useState({
+    date: "",
+    service: "",
+    groomer: "",
+    coatCondition: "",
+    skinCondition: "",
+    nextDueOn: "",
+    notes: "",
+  });
 
   // Training
   const [training, setTraining] = useState<any[]>([]);
   const [trainModal, setTrainModal] = useState(false);
-  const [trainForm, setTrainForm] = useState({ date: "", sessionType: "", trainer: "", focus: "", progress: "", homework: "", nextSessionOn: "" });
+  const [trainForm, setTrainForm] = useState({
+    date: "",
+    sessionType: "",
+    trainer: "",
+    focus: "",
+    progress: "",
+    homework: "",
+    nextSessionOn: "",
+  });
 
   // Meals (single doc)
   const [mealPlan, setMealPlan] = useState<any | null>(null);
@@ -142,7 +172,13 @@ export default function PetDetailPage() {
   // Activity
   const [activities, setActivities] = useState<any[]>([]);
   const [actModal, setActModal] = useState(false);
-  const [actForm, setActForm] = useState({ date: "", type: "Walk", durationMin: "30", intensity: "Moderate", notes: "" });
+  const [actForm, setActForm] = useState({
+    date: "",
+    type: "Walk",
+    durationMin: "30",
+    intensity: "Moderate",
+    notes: "",
+  });
 
   // Transport
   const [transport, setTransport] = useState<any[]>([]);
@@ -170,7 +206,10 @@ export default function PetDetailPage() {
     async function load() {
       const petRef = doc(db, "pets", petId);
       const petSnap = await getDoc(petRef);
-      if (!petSnap.exists()) { setPet(null); return; }
+      if (!petSnap.exists()) {
+        setPet(null);
+        return;
+      }
 
       const petData = { id: petSnap.id, ...(petSnap.data() as any) } as any;
       setPet(petData);
@@ -182,7 +221,7 @@ export default function PetDetailPage() {
 
       // vets list
       const vSnap = await getDocs(query(collection(db, "vets"), orderBy("createdAt", "desc")));
-      setVets(vSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+      setVets(vSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
     }
     load();
   }, [petId]);
@@ -194,64 +233,89 @@ export default function PetDetailPage() {
     const unsubs: Array<() => void> = [];
 
     // Always subscribe to weights for overview chart (lightweight)
-    unsubs.push(onSnapshot(query(collection(db, "pets", petId, "weights"), orderBy("weighedOn", "asc")), (snap) => {
-      setWeights(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-    }));
+    unsubs.push(
+      onSnapshot(query(collection(db, "pets", petId, "weights"), orderBy("weighedOn", "asc")), (snap) => {
+        setWeights(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+      })
+    );
 
     if (activeTab === "Medical") {
-      unsubs.push(onSnapshot(query(collection(db, "pets", petId, "vetVisits"), orderBy("visitOn", "desc")), (snap) => {
-        setVisits(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-      }));
-      unsubs.push(onSnapshot(query(collection(db, "pets", petId, "medications"), orderBy("createdAt", "desc")), (snap) => {
-        setMeds(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-      }));
+      unsubs.push(
+        onSnapshot(query(collection(db, "pets", petId, "vetVisits"), orderBy("visitOn", "desc")), (snap) => {
+          setVisits(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+        })
+      );
+      unsubs.push(
+        onSnapshot(query(collection(db, "pets", petId, "medications"), orderBy("createdAt", "desc")), (snap) => {
+          setMeds(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+        })
+      );
     }
 
     if (activeTab === "Vaccines & Parasites") {
-      unsubs.push(onSnapshot(query(collection(db, "pets", petId, "vaccinations"), orderBy("administeredOn", "desc")), (snap) => {
-        setVaccines(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-      }));
-      unsubs.push(onSnapshot(query(collection(db, "pets", petId, "parasiteTreatments"), orderBy("administeredOn", "desc")), (snap) => {
-        setParasites(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-      }));
+      unsubs.push(
+        onSnapshot(query(collection(db, "pets", petId, "vaccinations"), orderBy("administeredOn", "desc")), (snap) => {
+          setVaccines(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+        })
+      );
+      unsubs.push(
+        onSnapshot(
+          query(collection(db, "pets", petId, "parasiteTreatments"), orderBy("administeredOn", "desc")),
+          (snap) => {
+            setParasites(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+          }
+        )
+      );
     }
 
     if (activeTab === "Grooming") {
-      unsubs.push(onSnapshot(query(collection(db, "pets", petId, "grooming"), orderBy("date", "desc")), (snap) => {
-        setGrooming(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-      }));
+      unsubs.push(
+        onSnapshot(query(collection(db, "pets", petId, "grooming"), orderBy("date", "desc")), (snap) => {
+          setGrooming(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+        })
+      );
     }
 
     if (activeTab === "Training") {
-      unsubs.push(onSnapshot(query(collection(db, "pets", petId, "training"), orderBy("date", "desc")), (snap) => {
-        setTraining(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-      }));
+      unsubs.push(
+        onSnapshot(query(collection(db, "pets", petId, "training"), orderBy("date", "desc")), (snap) => {
+          setTraining(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+        })
+      );
     }
 
     if (activeTab === "Meals") {
       const mealRef = doc(db, "pets", petId, "profile", "mealPlan");
-      getDoc(mealRef).then(s => setMealPlan(s.exists() ? s.data() : null));
+      getDoc(mealRef).then((s) => setMealPlan(s.exists() ? s.data() : null));
     }
 
     if (activeTab === "Activity") {
-      unsubs.push(onSnapshot(query(collection(db, "pets", petId, "activities"), orderBy("date", "desc")), (snap) => {
-        setActivities(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-      }));
+      unsubs.push(
+        onSnapshot(query(collection(db, "pets", petId, "activities"), orderBy("date", "desc")), (snap) => {
+          setActivities(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+        })
+      );
     }
 
     if (activeTab === "Transport") {
-      unsubs.push(onSnapshot(query(collection(db, "pets", petId, "transport"), orderBy("date", "desc")), (snap) => {
-        setTransport(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-      }));
+      unsubs.push(
+        onSnapshot(query(collection(db, "pets", petId, "transport"), orderBy("date", "desc")), (snap) => {
+          setTransport(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+        })
+      );
     }
 
     if (activeTab === "Documents") {
-      unsubs.push(onSnapshot(query(collection(db, "pets", petId, "documents"), orderBy("uploadedAt", "desc")), (snap) => {
-        setDocs(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-      }));
+      unsubs.push(
+        onSnapshot(query(collection(db, "pets", petId, "documents"), orderBy("uploadedAt", "desc")), (snap) => {
+          setDocs(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+        })
+      );
     }
 
-    return () => { unsubs.forEach(u => u()); };
+    return () => {
+      unsubs.forEach((u) => u());
+    };
   }, [activeTab, pet, petId]);
 
   const ageText = useMemo(() => {
@@ -268,6 +332,11 @@ export default function PetDetailPage() {
     const last = weights[weights.length - 1];
     return last?.weightKg ?? null;
   }, [weights]);
+
+  const genderText = useMemo(() => {
+    // Backward compatible: old field `sex`, new field `gender`
+    return (pet?.gender ?? pet?.sex ?? "—") as string;
+  }, [pet?.gender, pet?.sex]);
 
   const whatsappHref = useMemo(() => {
     // Your client field is "Phone" (capital P). Also accept "phone" just in case.
@@ -332,7 +401,7 @@ export default function PetDetailPage() {
     const startOn = Timestamp.fromDate(new Date(medForm.startOn));
     const endOn = medForm.endOn ? Timestamp.fromDate(new Date(medForm.endOn)) : null;
 
-    const times = medForm.timesCsv.split(",").map(s => s.trim()).filter(Boolean);
+    const times = medForm.timesCsv.split(",").map((s) => s.trim()).filter(Boolean);
     const frequencyPerDay = Number(medForm.frequencyPerDay);
 
     const medRef = await addDoc(collection(db, "pets", petId, "medications"), {
@@ -358,7 +427,15 @@ export default function PetDetailPage() {
       daysAhead: 14,
     });
 
-    setMedForm({ name: "", dosage: "", frequencyPerDay: "2", timesCsv: "09:00,21:00", startOn: "", endOn: "", notes: "" });
+    setMedForm({
+      name: "",
+      dosage: "",
+      frequencyPerDay: "2",
+      timesCsv: "09:00,21:00",
+      startOn: "",
+      endOn: "",
+      notes: "",
+    });
     setMedModal(false);
   }
 
@@ -504,7 +581,17 @@ export default function PetDetailPage() {
       notes: transForm.notes.trim() || null,
       createdAt: Timestamp.now(),
     });
-    setTransForm({ date: "", purpose: "Vet visit", from: "", to: "", pickupTime: "", dropTime: "", driver: "", status: "Scheduled", notes: "" });
+    setTransForm({
+      date: "",
+      purpose: "Vet visit",
+      from: "",
+      to: "",
+      pickupTime: "",
+      dropTime: "",
+      driver: "",
+      status: "Scheduled",
+      notes: "",
+    });
     setTransModal(false);
   }
 
@@ -542,7 +629,9 @@ export default function PetDetailPage() {
   if (pet === null) {
     return (
       <main className="p-6">
-        <Link className="text-sm underline" href="/pets">← Back</Link>
+        <Link className="text-sm underline" href="/pets">
+          ← Back
+        </Link>
         <p className="mt-4">Pet not found.</p>
       </main>
     );
@@ -552,34 +641,32 @@ export default function PetDetailPage() {
     <main className="p-6 space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <Link className="text-sm underline" href={client ? `/clients/${client.id}` : "/pets"}>← Back</Link>
+          <Link className="text-sm underline" href={client ? `/clients/${client.id}` : "/pets"}>
+            ← Back
+          </Link>
           <h1 className="text-2xl font-semibold mt-2">{pet?.name ?? "Pet"}</h1>
           <p className="text-sm text-neutral-600 mt-1">
-            Pet parent: {client?.name ?? "—"} • Breed: {pet?.breed ?? "—"} • Age: {ageText} • Microchip: {pet?.microchipNo ?? "—"}
+            Pet parent: {client?.name ?? "—"} • Breed: {pet?.breed ?? "—"} • Age: {ageText} • Microchip:{" "}
+            {pet?.microchipNo ?? "—"}
           </p>
         </div>
 
         <div className="flex items-center gap-3">
           <div className="text-sm">
             <span className="text-neutral-600">Primary Vet:</span>{" "}
-            <select
-              className="border rounded-lg p-2 text-sm"
-              value={pet?.vetId ?? ""}
-              onChange={(e) => setPrimaryVet(e.target.value)}
-            >
+            <select className="border rounded-lg p-2 text-sm" value={pet?.vetId ?? ""} onChange={(e) => setPrimaryVet(e.target.value)}>
               <option value="">—</option>
-              {vets.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+              {vets.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name}
+                </option>
+              ))}
             </select>
           </div>
 
           {whatsappHref ? (
-            <a
-              className="rounded-lg bg-black text-white px-3 py-2 text-sm"
-              href={whatsappHref}
-              target="_blank"
-              rel="noreferrer"
-            >
-              WhatsApp owner
+            <a className="rounded-lg bg-black text-white px-3 py-2 text-sm" href={whatsappHref} target="_blank" rel="noreferrer">
+              WhatsApp pet parent
             </a>
           ) : (
             <button
@@ -587,7 +674,7 @@ export default function PetDetailPage() {
               disabled
               title='Add client "Phone" to enable WhatsApp'
             >
-              WhatsApp owner
+              WhatsApp pet parent
             </button>
           )}
         </div>
@@ -602,19 +689,21 @@ export default function PetDetailPage() {
             <p className="text-sm text-neutral-600 mt-1">Latest: {latestWeight ? `${latestWeight} kg` : "—"}</p>
             <div className="mt-3">
               <WeightChart
-                data={weights.map(w => ({
+                data={weights.map((w) => ({
                   date: format(w.weighedOn?.toDate?.() ?? new Date(), "dd MMM"),
                   weightKg: w.weightKg,
                 }))}
               />
             </div>
-            <button className="mt-4 rounded-lg border px-3 py-2 text-sm" onClick={() => setWeightModal(true)}>Add weight</button>
+            <button className="mt-4 rounded-lg border px-3 py-2 text-sm" onClick={() => setWeightModal(true)}>
+              Add weight
+            </button>
           </div>
 
           <div className="border rounded-2xl p-4">
             <h2 className="font-semibold">Quick info</h2>
             <div className="mt-3 space-y-2 text-sm">
-              <Row k="Gender" v={pet?.sex ?? "—"} />
+              <Row k="Gender" v={genderText} />
               <Row k="Species" v={pet?.species ?? "Dog"} />
               <Row k="Temperament" v={pet?.temperament ?? "—"} />
               <Row k="Notes" v={pet?.notes ?? "—"} />
@@ -623,65 +712,86 @@ export default function PetDetailPage() {
         </section>
       ) : null}
 
-      {/* --- rest of your tabs and modals remain unchanged --- */}
-      {/* (Keeping your original code from here onward to avoid breaking anything.) */}
-
       {/* Medical */}
       {activeTab === "Medical" ? (
         <section className="grid lg:grid-cols-2 gap-4">
           <div className="border rounded-2xl p-4">
             <div className="flex items-center justify-between">
               <h2 className="font-semibold">Vet visits</h2>
-              <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setVisitModal(true)}>Add</button>
+              <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setVisitModal(true)}>
+                Add
+              </button>
             </div>
             <div className="mt-3 space-y-2">
-              {visits.length === 0 ? <p className="text-sm text-neutral-600">No visits yet.</p> : visits.map(v => (
-                <div key={v.id} className="border rounded-xl p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">{v.reason ?? "Vet visit"}</p>
-                      <p className="text-xs text-neutral-600 mt-0.5">
-                        {format(v.visitOn.toDate(), "dd MMM yyyy")} • Vet: {vets.find(x => x.id === v.vetId)?.name ?? "—"}
-                        {v.followUpOn ? ` • Follow-up ${format(v.followUpOn.toDate(), "dd MMM yyyy")}` : ""}
-                      </p>
-                      {v.diagnosis ? <p className="text-xs mt-2"><span className="text-neutral-600">Dx:</span> {v.diagnosis}</p> : null}
-                      {v.prognosis ? <p className="text-xs mt-1"><span className="text-neutral-600">Prognosis:</span> {v.prognosis}</p> : null}
-                      {v.notes ? <p className="text-xs mt-1 text-neutral-600">{v.notes}</p> : null}
+              {visits.length === 0 ? (
+                <p className="text-sm text-neutral-600">No visits yet.</p>
+              ) : (
+                visits.map((v) => (
+                  <div key={v.id} className="border rounded-xl p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">{v.reason ?? "Vet visit"}</p>
+                        <p className="text-xs text-neutral-600 mt-0.5">
+                          {format(v.visitOn.toDate(), "dd MMM yyyy")} • Vet:{" "}
+                          {vets.find((x) => x.id === v.vetId)?.name ?? "—"}
+                          {v.followUpOn ? ` • Follow-up ${format(v.followUpOn.toDate(), "dd MMM yyyy")}` : ""}
+                        </p>
+                        {v.diagnosis ? (
+                          <p className="text-xs mt-2">
+                            <span className="text-neutral-600">Dx:</span> {v.diagnosis}
+                          </p>
+                        ) : null}
+                        {v.prognosis ? (
+                          <p className="text-xs mt-1">
+                            <span className="text-neutral-600">Prognosis:</span> {v.prognosis}
+                          </p>
+                        ) : null}
+                        {v.notes ? <p className="text-xs mt-1 text-neutral-600">{v.notes}</p> : null}
+                      </div>
+                      <button className="text-xs underline text-red-600" onClick={() => del("vetVisits", v.id)}>
+                        Delete
+                      </button>
                     </div>
-                    <button className="text-xs underline text-red-600" onClick={() => del("vetVisits", v.id)}>Delete</button>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
 
           <div className="border rounded-2xl p-4">
             <div className="flex items-center justify-between">
               <h2 className="font-semibold">Medications</h2>
-              <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setMedModal(true)}>Add</button>
+              <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setMedModal(true)}>
+                Add
+              </button>
             </div>
-            <p className="text-sm text-neutral-600 mt-1">
-              This generates in-app reminders for the next 14 days. WhatsApp/SMS later.
-            </p>
+            <p className="text-sm text-neutral-600 mt-1">This generates in-app reminders for the next 14 days. WhatsApp/SMS later.</p>
             <div className="mt-3 space-y-2">
-              {meds.length === 0 ? <p className="text-sm text-neutral-600">No medications.</p> : meds.map(m => (
-                <div key={m.id} className="border rounded-xl p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">{m.name}</p>
-                      <p className="text-xs text-neutral-600 mt-0.5">
-                        {m.dosage ? `${m.dosage} • ` : ""}{m.frequencyPerDay ?? 1}x/day • {Array.isArray(m.times) ? m.times.join(", ") : "—"}
-                      </p>
-                      <p className="text-xs text-neutral-600 mt-0.5">
-                        Start {m.startOn ? format(m.startOn.toDate(), "dd MMM yyyy") : "—"}
-                        {m.endOn ? ` • End ${format(m.endOn.toDate(), "dd MMM yyyy")}` : ""}
-                      </p>
-                      {m.notes ? <p className="text-xs mt-1 text-neutral-600">{m.notes}</p> : null}
+              {meds.length === 0 ? (
+                <p className="text-sm text-neutral-600">No medications.</p>
+              ) : (
+                meds.map((m) => (
+                  <div key={m.id} className="border rounded-xl p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">{m.name}</p>
+                        <p className="text-xs text-neutral-600 mt-0.5">
+                          {m.dosage ? `${m.dosage} • ` : ""}
+                          {m.frequencyPerDay ?? 1}x/day • {Array.isArray(m.times) ? m.times.join(", ") : "—"}
+                        </p>
+                        <p className="text-xs text-neutral-600 mt-0.5">
+                          Start {m.startOn ? format(m.startOn.toDate(), "dd MMM yyyy") : "—"}
+                          {m.endOn ? ` • End ${format(m.endOn.toDate(), "dd MMM yyyy")}` : ""}
+                        </p>
+                        {m.notes ? <p className="text-xs mt-1 text-neutral-600">{m.notes}</p> : null}
+                      </div>
+                      <button className="text-xs underline text-red-600" onClick={() => del("medications", m.id)}>
+                        Delete
+                      </button>
                     </div>
-                    <button className="text-xs underline text-red-600" onClick={() => del("medications", m.id)}>Delete</button>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         </section>
@@ -693,50 +803,72 @@ export default function PetDetailPage() {
           <div className="border rounded-2xl p-4">
             <div className="flex items-center justify-between">
               <h2 className="font-semibold">Vaccinations</h2>
-              <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setVacModal(true)}>Add</button>
+              <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setVacModal(true)}>
+                Add
+              </button>
             </div>
             <div className="mt-3 space-y-2">
-              {vaccines.length === 0 ? <p className="text-sm text-neutral-600">No vaccination records.</p> : vaccines.map(v => (
-                <div key={v.id} className="border rounded-xl p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">{v.name}</p>
-                      <p className="text-xs text-neutral-600 mt-0.5">
-                        Given {format(v.administeredOn.toDate(), "dd MMM yyyy")}
-                        {v.dueOn ? ` • Due ${format(v.dueOn.toDate(), "dd MMM yyyy")}` : ""}
-                      </p>
-                      {v.brand ? <p className="text-xs text-neutral-600 mt-0.5">Brand: {v.brand} {v.batchNo ? `• Batch ${v.batchNo}` : ""}</p> : null}
-                      {v.notes ? <p className="text-xs mt-1 text-neutral-600">{v.notes}</p> : null}
+              {vaccines.length === 0 ? (
+                <p className="text-sm text-neutral-600">No vaccination records.</p>
+              ) : (
+                vaccines.map((v) => (
+                  <div key={v.id} className="border rounded-xl p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">{v.name}</p>
+                        <p className="text-xs text-neutral-600 mt-0.5">
+                          Given {format(v.administeredOn.toDate(), "dd MMM yyyy")}
+                          {v.dueOn ? ` • Due ${format(v.dueOn.toDate(), "dd MMM yyyy")}` : ""}
+                        </p>
+                        {v.brand ? (
+                          <p className="text-xs text-neutral-600 mt-0.5">
+                            Brand: {v.brand} {v.batchNo ? `• Batch ${v.batchNo}` : ""}
+                          </p>
+                        ) : null}
+                        {v.notes ? <p className="text-xs mt-1 text-neutral-600">{v.notes}</p> : null}
+                      </div>
+                      <button className="text-xs underline text-red-600" onClick={() => del("vaccinations", v.id)}>
+                        Delete
+                      </button>
                     </div>
-                    <button className="text-xs underline text-red-600" onClick={() => del("vaccinations", v.id)}>Delete</button>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
 
           <div className="border rounded-2xl p-4">
             <div className="flex items-center justify-between">
               <h2 className="font-semibold">Deworming & Spot-on</h2>
-              <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setParModal(true)}>Add</button>
+              <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setParModal(true)}>
+                Add
+              </button>
             </div>
             <div className="mt-3 space-y-2">
-              {parasites.length === 0 ? <p className="text-sm text-neutral-600">No parasite treatments.</p> : parasites.map(p => (
-                <div key={p.id} className="border rounded-xl p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">{p.type === "DEWORMING" ? "Deworming" : "Spot-on"} — {p.product}</p>
-                      <p className="text-xs text-neutral-600 mt-0.5">
-                        Given {format(p.administeredOn.toDate(), "dd MMM yyyy")}
-                        {p.dueOn ? ` • Due ${format(p.dueOn.toDate(), "dd MMM yyyy")}` : ""}
-                      </p>
-                      {p.dose ? <p className="text-xs text-neutral-600 mt-0.5">Dose: {p.dose}</p> : null}
-                      {p.notes ? <p className="text-xs mt-1 text-neutral-600">{p.notes}</p> : null}
+              {parasites.length === 0 ? (
+                <p className="text-sm text-neutral-600">No parasite treatments.</p>
+              ) : (
+                parasites.map((p) => (
+                  <div key={p.id} className="border rounded-xl p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">
+                          {p.type === "DEWORMING" ? "Deworming" : "Spot-on"} — {p.product}
+                        </p>
+                        <p className="text-xs text-neutral-600 mt-0.5">
+                          Given {format(p.administeredOn.toDate(), "dd MMM yyyy")}
+                          {p.dueOn ? ` • Due ${format(p.dueOn.toDate(), "dd MMM yyyy")}` : ""}
+                        </p>
+                        {p.dose ? <p className="text-xs text-neutral-600 mt-0.5">Dose: {p.dose}</p> : null}
+                        {p.notes ? <p className="text-xs mt-1 text-neutral-600">{p.notes}</p> : null}
+                      </div>
+                      <button className="text-xs underline text-red-600" onClick={() => del("parasiteTreatments", p.id)}>
+                        Delete
+                      </button>
                     </div>
-                    <button className="text-xs underline text-red-600" onClick={() => del("parasiteTreatments", p.id)}>Delete</button>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         </section>
@@ -747,29 +879,39 @@ export default function PetDetailPage() {
         <section className="border rounded-2xl p-4">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">Grooming records</h2>
-            <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setGroomModal(true)}>Add</button>
+            <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setGroomModal(true)}>
+              Add
+            </button>
           </div>
           <div className="mt-3 space-y-2">
-            {grooming.length === 0 ? <p className="text-sm text-neutral-600">No grooming records.</p> : grooming.map(g => (
-              <div key={g.id} className="border rounded-xl p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">{g.service ?? "Grooming"}</p>
-                    <p className="text-xs text-neutral-600 mt-0.5">
-                      {format(g.date.toDate(), "dd MMM yyyy")} • Groomer {g.groomer ?? "—"}
-                      {g.nextDueOn ? ` • Next due ${format(g.nextDueOn.toDate(), "dd MMM yyyy")}` : ""}
-                    </p>
-                    {(g.coatCondition || g.skinCondition) ? (
-                      <p className="text-xs text-neutral-600 mt-1">
-                        {g.coatCondition ? `Coat: ${g.coatCondition}` : ""}{g.coatCondition && g.skinCondition ? " • " : ""}{g.skinCondition ? `Skin: ${g.skinCondition}` : ""}
+            {grooming.length === 0 ? (
+              <p className="text-sm text-neutral-600">No grooming records.</p>
+            ) : (
+              grooming.map((g) => (
+                <div key={g.id} className="border rounded-xl p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">{g.service ?? "Grooming"}</p>
+                      <p className="text-xs text-neutral-600 mt-0.5">
+                        {format(g.date.toDate(), "dd MMM yyyy")} • Groomer {g.groomer ?? "—"}
+                        {g.nextDueOn ? ` • Next due ${format(g.nextDueOn.toDate(), "dd MMM yyyy")}` : ""}
                       </p>
-                    ) : null}
-                    {g.notes ? <p className="text-xs mt-1 text-neutral-600">{g.notes}</p> : null}
+                      {g.coatCondition || g.skinCondition ? (
+                        <p className="text-xs text-neutral-600 mt-1">
+                          {g.coatCondition ? `Coat: ${g.coatCondition}` : ""}
+                          {g.coatCondition && g.skinCondition ? " • " : ""}
+                          {g.skinCondition ? `Skin: ${g.skinCondition}` : ""}
+                        </p>
+                      ) : null}
+                      {g.notes ? <p className="text-xs mt-1 text-neutral-600">{g.notes}</p> : null}
+                    </div>
+                    <button className="text-xs underline text-red-600" onClick={() => del("grooming", g.id)}>
+                      Delete
+                    </button>
                   </div>
-                  <button className="text-xs underline text-red-600" onClick={() => del("grooming", g.id)}>Delete</button>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </section>
       ) : null}
@@ -779,26 +921,42 @@ export default function PetDetailPage() {
         <section className="border rounded-2xl p-4">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">Training sessions</h2>
-            <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setTrainModal(true)}>Add</button>
+            <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setTrainModal(true)}>
+              Add
+            </button>
           </div>
           <div className="mt-3 space-y-2">
-            {training.length === 0 ? <p className="text-sm text-neutral-600">No training sessions.</p> : training.map(t => (
-              <div key={t.id} className="border rounded-xl p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">{t.sessionType ?? "Training"}</p>
-                    <p className="text-xs text-neutral-600 mt-0.5">
-                      {format(t.date.toDate(), "dd MMM yyyy")} • Trainer {t.trainer ?? "—"}
-                      {t.nextSessionOn ? ` • Next ${format(t.nextSessionOn.toDate(), "dd MMM yyyy")}` : ""}
-                    </p>
-                    {t.focus ? <p className="text-xs mt-1"><span className="text-neutral-600">Focus:</span> {t.focus}</p> : null}
-                    {t.progress ? <p className="text-xs mt-1"><span className="text-neutral-600">Progress:</span> {t.progress}</p> : null}
-                    {t.homework ? <p className="text-xs mt-1 text-neutral-600">Homework: {t.homework}</p> : null}
+            {training.length === 0 ? (
+              <p className="text-sm text-neutral-600">No training sessions.</p>
+            ) : (
+              training.map((t) => (
+                <div key={t.id} className="border rounded-xl p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">{t.sessionType ?? "Training"}</p>
+                      <p className="text-xs text-neutral-600 mt-0.5">
+                        {format(t.date.toDate(), "dd MMM yyyy")} • Trainer {t.trainer ?? "—"}
+                        {t.nextSessionOn ? ` • Next ${format(t.nextSessionOn.toDate(), "dd MMM yyyy")}` : ""}
+                      </p>
+                      {t.focus ? (
+                        <p className="text-xs mt-1">
+                          <span className="text-neutral-600">Focus:</span> {t.focus}
+                        </p>
+                      ) : null}
+                      {t.progress ? (
+                        <p className="text-xs mt-1">
+                          <span className="text-neutral-600">Progress:</span> {t.progress}
+                        </p>
+                      ) : null}
+                      {t.homework ? <p className="text-xs mt-1 text-neutral-600">Homework: {t.homework}</p> : null}
+                    </div>
+                    <button className="text-xs underline text-red-600" onClick={() => del("training", t.id)}>
+                      Delete
+                    </button>
                   </div>
-                  <button className="text-xs underline text-red-600" onClick={() => del("training", t.id)}>Delete</button>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </section>
       ) : null}
@@ -875,21 +1033,31 @@ export default function PetDetailPage() {
         <section className="border rounded-2xl p-4">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">Activity log</h2>
-            <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setActModal(true)}>Add</button>
+            <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setActModal(true)}>
+              Add
+            </button>
           </div>
           <div className="mt-3 space-y-2">
-            {activities.length === 0 ? <p className="text-sm text-neutral-600">No activities.</p> : activities.map(a => (
-              <div key={a.id} className="border rounded-xl p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">{a.type} • {a.durationMin} min • {a.intensity}</p>
-                    <p className="text-xs text-neutral-600 mt-0.5">{format(a.date.toDate(), "dd MMM yyyy")}</p>
-                    {a.notes ? <p className="text-xs mt-1 text-neutral-600">{a.notes}</p> : null}
+            {activities.length === 0 ? (
+              <p className="text-sm text-neutral-600">No activities.</p>
+            ) : (
+              activities.map((a) => (
+                <div key={a.id} className="border rounded-xl p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">
+                        {a.type} • {a.durationMin} min • {a.intensity}
+                      </p>
+                      <p className="text-xs text-neutral-600 mt-0.5">{format(a.date.toDate(), "dd MMM yyyy")}</p>
+                      {a.notes ? <p className="text-xs mt-1 text-neutral-600">{a.notes}</p> : null}
+                    </div>
+                    <button className="text-xs underline text-red-600" onClick={() => del("activities", a.id)}>
+                      Delete
+                    </button>
                   </div>
-                  <button className="text-xs underline text-red-600" onClick={() => del("activities", a.id)}>Delete</button>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </section>
       ) : null}
@@ -899,27 +1067,38 @@ export default function PetDetailPage() {
         <section className="border rounded-2xl p-4">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">Pick-up / drop schedules</h2>
-            <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setTransModal(true)}>Add</button>
+            <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setTransModal(true)}>
+              Add
+            </button>
           </div>
           <div className="mt-3 space-y-2">
-            {transport.length === 0 ? <p className="text-sm text-neutral-600">No transport schedules.</p> : transport.map(t => (
-              <div key={t.id} className="border rounded-xl p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">{t.purpose ?? "Transport"} • {t.status}</p>
-                    <p className="text-xs text-neutral-600 mt-0.5">
-                      {format(t.date.toDate(), "dd MMM yyyy")}
-                      {t.pickupTime ? ` • Pickup ${t.pickupTime}` : ""}{t.dropTime ? ` • Drop ${t.dropTime}` : ""}
-                    </p>
-                    <p className="text-xs text-neutral-600 mt-0.5">
-                      {t.from ?? "—"} → {t.to ?? "—"} • Driver {t.driver ?? "—"}
-                    </p>
-                    {t.notes ? <p className="text-xs mt-1 text-neutral-600">{t.notes}</p> : null}
+            {transport.length === 0 ? (
+              <p className="text-sm text-neutral-600">No transport schedules.</p>
+            ) : (
+              transport.map((t) => (
+                <div key={t.id} className="border rounded-xl p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">
+                        {t.purpose ?? "Transport"} • {t.status}
+                      </p>
+                      <p className="text-xs text-neutral-600 mt-0.5">
+                        {format(t.date.toDate(), "dd MMM yyyy")}
+                        {t.pickupTime ? ` • Pickup ${t.pickupTime}` : ""}
+                        {t.dropTime ? ` • Drop ${t.dropTime}` : ""}
+                      </p>
+                      <p className="text-xs text-neutral-600 mt-0.5">
+                        {t.from ?? "—"} → {t.to ?? "—"} • Driver {t.driver ?? "—"}
+                      </p>
+                      {t.notes ? <p className="text-xs mt-1 text-neutral-600">{t.notes}</p> : null}
+                    </div>
+                    <button className="text-xs underline text-red-600" onClick={() => del("transport", t.id)}>
+                      Delete
+                    </button>
                   </div>
-                  <button className="text-xs underline text-red-600" onClick={() => del("transport", t.id)}>Delete</button>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </section>
       ) : null}
@@ -929,27 +1108,35 @@ export default function PetDetailPage() {
         <section className="border rounded-2xl p-4">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">Documents vault</h2>
-            <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setDocModal(true)}>Upload</button>
+            <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setDocModal(true)}>
+              Upload
+            </button>
           </div>
-          <p className="text-sm text-neutral-600 mt-1">
-            Upload vaccination cards, blood reports, prescriptions, certificates, etc.
-          </p>
+          <p className="text-sm text-neutral-600 mt-1">Upload vaccination cards, blood reports, prescriptions, certificates, etc.</p>
           <div className="mt-3 space-y-2">
-            {docs.length === 0 ? <p className="text-sm text-neutral-600">No documents.</p> : docs.map(d => (
-              <div key={d.id} className="border rounded-xl p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">{d.kind}</p>
-                    <p className="text-xs text-neutral-600 mt-0.5">
-                      {d.filename} • {format(d.uploadedAt.toDate(), "dd MMM yyyy")}
-                    </p>
-                    {d.notes ? <p className="text-xs mt-1 text-neutral-600">{d.notes}</p> : null}
-                    <a className="text-xs underline mt-2 inline-block" href={d.url} target="_blank" rel="noreferrer">Open</a>
+            {docs.length === 0 ? (
+              <p className="text-sm text-neutral-600">No documents.</p>
+            ) : (
+              docs.map((d) => (
+                <div key={d.id} className="border rounded-xl p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">{d.kind}</p>
+                      <p className="text-xs text-neutral-600 mt-0.5">
+                        {d.filename} • {format(d.uploadedAt.toDate(), "dd MMM yyyy")}
+                      </p>
+                      {d.notes ? <p className="text-xs mt-1 text-neutral-600">{d.notes}</p> : null}
+                      <a className="text-xs underline mt-2 inline-block" href={d.url} target="_blank" rel="noreferrer">
+                        Open
+                      </a>
+                    </div>
+                    <button className="text-xs underline text-red-600" onClick={() => del("documents", d.id)}>
+                      Delete
+                    </button>
                   </div>
-                  <button className="text-xs underline text-red-600" onClick={() => del("documents", d.id)}>Delete</button>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </section>
       ) : null}
@@ -966,7 +1153,9 @@ export default function PetDetailPage() {
           <Field label="Notes">
             <textarea className="w-full border rounded-lg p-2" rows={3} value={weightForm.notes} onChange={(e) => setWeightForm({ ...weightForm, notes: e.target.value })} />
           </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addWeight}>Save</button>
+          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addWeight}>
+            Save
+          </button>
         </div>
       </Modal>
 
@@ -978,7 +1167,11 @@ export default function PetDetailPage() {
           <Field label="Vet">
             <select className="w-full border rounded-lg p-2" value={visitForm.vetId} onChange={(e) => setVisitForm({ ...visitForm, vetId: e.target.value })}>
               <option value="">—</option>
-              {vets.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+              {vets.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name}
+                </option>
+              ))}
             </select>
           </Field>
           <Field label="Reason">
@@ -996,7 +1189,9 @@ export default function PetDetailPage() {
           <Field label="Notes">
             <textarea className="w-full border rounded-lg p-2" rows={3} value={visitForm.notes} onChange={(e) => setVisitForm({ ...visitForm, notes: e.target.value })} />
           </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addVisit}>Save</button>
+          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addVisit}>
+            Save
+          </button>
         </div>
       </Modal>
 
@@ -1027,7 +1222,9 @@ export default function PetDetailPage() {
           <Field label="Notes">
             <textarea className="w-full border rounded-lg p-2" rows={3} value={medForm.notes} onChange={(e) => setMedForm({ ...medForm, notes: e.target.value })} />
           </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addMedication}>Save + create reminders</button>
+          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addMedication}>
+            Save + create reminders
+          </button>
         </div>
       </Modal>
 
@@ -1055,7 +1252,9 @@ export default function PetDetailPage() {
           <Field label="Notes">
             <textarea className="w-full border rounded-lg p-2" rows={3} value={vacForm.notes} onChange={(e) => setVacForm({ ...vacForm, notes: e.target.value })} />
           </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addVaccination}>Save</button>
+          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addVaccination}>
+            Save
+          </button>
         </div>
       </Modal>
 
@@ -1084,7 +1283,9 @@ export default function PetDetailPage() {
           <Field label="Notes">
             <textarea className="w-full border rounded-lg p-2" rows={3} value={parForm.notes} onChange={(e) => setParForm({ ...parForm, notes: e.target.value })} />
           </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addParasite}>Save</button>
+          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addParasite}>
+            Save
+          </button>
         </div>
       </Modal>
 
@@ -1115,7 +1316,9 @@ export default function PetDetailPage() {
           <Field label="Notes">
             <textarea className="w-full border rounded-lg p-2" rows={3} value={groomForm.notes} onChange={(e) => setGroomForm({ ...groomForm, notes: e.target.value })} />
           </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addGrooming}>Save</button>
+          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addGrooming}>
+            Save
+          </button>
         </div>
       </Modal>
 
@@ -1144,7 +1347,9 @@ export default function PetDetailPage() {
           <Field label="Next session on">
             <input type="date" className="w-full border rounded-lg p-2" value={trainForm.nextSessionOn} onChange={(e) => setTrainForm({ ...trainForm, nextSessionOn: e.target.value })} />
           </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addTraining}>Save</button>
+          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addTraining}>
+            Save
+          </button>
         </div>
       </Modal>
 
@@ -1171,7 +1376,9 @@ export default function PetDetailPage() {
           <Field label="Notes">
             <textarea className="w-full border rounded-lg p-2" rows={3} value={actForm.notes} onChange={(e) => setActForm({ ...actForm, notes: e.target.value })} />
           </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addActivity}>Save</button>
+          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addActivity}>
+            Save
+          </button>
         </div>
       </Modal>
 
@@ -1215,7 +1422,9 @@ export default function PetDetailPage() {
           <Field label="Notes">
             <textarea className="w-full border rounded-lg p-2" rows={3} value={transForm.notes} onChange={(e) => setTransForm({ ...transForm, notes: e.target.value })} />
           </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addTransport}>Save</button>
+          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addTransport}>
+            Save
+          </button>
         </div>
       </Modal>
 
@@ -1223,8 +1432,10 @@ export default function PetDetailPage() {
         <div className="space-y-2">
           <Field label="Kind">
             <select className="w-full border rounded-lg p-2" value={docForm.kind} onChange={(e) => setDocForm({ ...docForm, kind: e.target.value })}>
-              {["Vaccination Card","Blood Report","Prescription","X-ray / Scan","Certificate","Photo","Other"].map(k => (
-                <option key={k} value={k}>{k}</option>
+              {["Vaccination Card", "Blood Report", "Prescription", "X-ray / Scan", "Certificate", "Photo", "Other"].map((k) => (
+                <option key={k} value={k}>
+                  {k}
+                </option>
               ))}
             </select>
           </Field>
@@ -1243,7 +1454,7 @@ export default function PetDetailPage() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="block">
       <span className="text-xs text-neutral-600">{label}</span>
