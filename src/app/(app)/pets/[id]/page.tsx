@@ -1,629 +1,433 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  onSnapshot,
-  orderBy,
-  query,
-  Timestamp,
-  updateDoc,
-  getDocs,
-} from "firebase/firestore";
-import { db, storage } from "@/lib/firebase";
-import { format, differenceInYears, differenceInMonths } from "date-fns";
-import WeightChart from "@/components/WeightChart";
-import Tabs from "@/components/Tabs";
-import Modal from "@/components/Modal";
-import { createReminderForDueDate, createMedicationReminders } from "@/lib/reminders";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { doc, getDoc, updateDoc, Timestamp } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import { BREEDS, findBreedRecordByLabel } from "@/lib/breeds";
 
-type Pet = any;
+type BreedType = "Purebred" | "Mix-breed" | "Cross-breed";
 
-const TAB_KEYS = [
-  "Overview",
-  "Medical",
-  "Vaccines & Parasites",
-  "Grooming",
-  "Training",
-  "Meals",
-  "Activity",
-  "Transport",
-  "Documents",
-] as const;
+const CAT_BREEDS = [
+  "Domestic Short Hair (DSH)",
+  "Domestic Medium Hair (DMH)",
+  "Domestic Long Hair (DLH)",
+  "Indian Domestic (Desi)",
+  "Persian",
+  "Himalayan",
+  "Siamese",
+  "Bengal",
+  "Maine Coon",
+  "Ragdoll",
+  "British Shorthair",
+  "Scottish Fold",
+  "Sphynx",
+  "Russian Blue",
+  "Abyssinian",
+  "Birman",
+  "Oriental Shorthair",
+  "Bombay",
+  "American Shorthair",
+].sort((a, b) => a.localeCompare(b));
 
-// --- WhatsApp helpers (does NOT modify saved data) ---
-function normalizeToE164(raw: string, defaultCountryCode = "91"): string | null {
-  const input = (raw ?? "").trim();
-  if (!input) return null;
+function toTitleCase(s?: string) {
+  if (!s) return "";
+  return s.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
+}
 
-  // keep digits and leading + if present
-  let s = input.replace(/[^\d+]/g, "");
+function isAllCapsLabel(s: string) {
+  const letters = s.replace(/[^A-Za-z]+/g, "");
+  return letters.length > 0 && letters === letters.toUpperCase();
+}
 
-  // +<country><number>
-  if (s.startsWith("+")) {
-    const digits = s.slice(1).replace(/\D/g, "");
-    if (digits.length < 8 || digits.length > 15) return null;
-    return `+${digits}`;
-  }
+function normalizeBreedLabel(input: string) {
+  const raw = input.trim();
+  if (!raw) return "";
 
-  // 00<country><number>
-  if (s.startsWith("00")) {
-    const digits = s.slice(2).replace(/\D/g, "");
-    if (digits.length < 8 || digits.length > 15) return null;
-    return `+${digits}`;
-  }
+  const lower = raw.toLowerCase();
+  if (lower === "mix-breed") return "Mix-breed";
+  if (lower === "cross-breed") return "Cross-breed";
+  if (lower === "indie (indian pariah)") return "Indie (Indian Pariah)";
 
-  const digits = s.replace(/\D/g, "");
+  if (isAllCapsLabel(raw)) return toTitleCase(raw);
+  return raw;
+}
 
-  // India local formats
-  if (digits.length === 10) return `+${defaultCountryCode}${digits}`;
-  if (digits.length === 11 && digits.startsWith("0")) return `+${defaultCountryCode}${digits.slice(1)}`;
+function normalizeFreeTextBreed(input: string) {
+  let s = input.trim();
+  if (!s) return "";
+  s = s.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
+  s = s.replace(/\(([a-z0-9]{2,6})\)/g, (_, p1) => `(${String(p1).toUpperCase()})`);
+  s = s.replace(/\b(dsh|dmh|dlh|akc|fci)\b/gi, (m) => m.toUpperCase());
+  return s;
+}
 
-  // already includes country code, just missing +
-  if (digits.length >= 11 && digits.length <= 15) return `+${digits}`;
+function getBreedTypeFromLabel(label: string): BreedType {
+  const l = label.trim().toLowerCase();
+  if (l === "mix-breed") return "Mix-breed";
+  if (l === "cross-breed") return "Cross-breed";
+  return "Purebred";
+}
 
+function formatFciText(fci?: { groupNo?: number; groupName?: string }) {
+  const groupNo = fci?.groupNo;
+  const groupName = fci?.groupName ? toTitleCase(fci.groupName) : undefined;
+
+  if (groupNo && groupName) return `FCI: Group ${groupNo} — ${groupName}`;
+  if (groupNo) return `FCI: Group ${groupNo}`;
+  if (groupName) return `FCI: ${groupName}`;
   return null;
 }
 
-function buildWhatsAppLink(e164: string, text: string): string {
-  const waNumber = e164.replace(/[^\d]/g, ""); // wa.me expects digits only
-  return `https://wa.me/${waNumber}?text=${encodeURIComponent(text)}`;
+function formatAkcText(akc?: { groupName?: string }) {
+  const name = akc?.groupName ? toTitleCase(akc.groupName) : undefined;
+  return name ? `AKC: ${name}` : null;
+}
+
+function tsToDateInput(v: any): string {
+  if (!v) return "";
+  try {
+    const d =
+      v instanceof Timestamp
+        ? v.toDate()
+        : typeof v?.toDate === "function"
+          ? v.toDate()
+          : v instanceof Date
+            ? v
+            : null;
+    if (!d) return "";
+    const yyyy = String(d.getFullYear()).padStart(4, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  } catch {
+    return "";
+  }
+}
+
+function calcAgeLabel(dobStr: string) {
+  if (!dobStr) return "";
+  const d = new Date(dobStr);
+  if (isNaN(d.getTime())) return "";
+
+  const now = new Date();
+  let months =
+    (now.getFullYear() - d.getFullYear()) * 12 +
+    (now.getMonth() - d.getMonth());
+
+  // If current day is before birth day, subtract one month
+  if (now.getDate() < d.getDate()) months -= 1;
+
+  if (months < 0) return "";
+
+  const years = Math.floor(months / 12);
+  const remMonths = months % 12;
+
+  const y = years === 1 ? "1 year" : `${years} years`;
+  const m = remMonths === 1 ? "1 month" : `${remMonths} months`;
+
+  if (years === 0 && remMonths === 0) return "Age: < 1 month";
+  if (years === 0) return `Age: ${m}`;
+  if (remMonths === 0) return `Age: ${y}`;
+  return `Age: ${y} ${m}`;
+}
+
+function comparableForm(form: {
+  name: string;
+  species: string;
+  breed: string;
+  breedType: BreedType;
+  breedComponents: string[];
+  sex: string;
+  dob: string;
+  microchipNo: string;
+  temperament: string;
+  notes: string;
+}) {
+  const species = form.species.trim() || "Dog";
+  const breedType = form.breedType;
+
+  const breed =
+    species === "Cat"
+      ? normalizeFreeTextBreed(form.breed)
+      : normalizeBreedLabel(form.breed);
+
+  const comps =
+    breedType === "Mix-breed" || breedType === "Cross-breed"
+      ? form.breedComponents
+          .map((x) => (species === "Cat" ? normalizeFreeTextBreed(x) : normalizeBreedLabel(x)))
+          .map((x) => x.trim())
+          .filter(Boolean)
+      : [];
+
+  return JSON.stringify({
+    name: form.name.trim(),
+    species,
+    breed: breed.trim(),
+    breedType,
+    breedComponents: comps,
+    sex: form.sex.trim(),
+    dob: form.dob.trim(),
+    microchipNo: form.microchipNo.trim(),
+    temperament: form.temperament.trim(),
+    notes: form.notes.trim(),
+  });
 }
 
 export default function PetDetailPage() {
   const params = useParams<{ id: string }>();
   const petId = params.id;
 
-  const [pet, setPet] = useState<Pet | null>(null);
-  const [client, setClient] = useState<any | null>(null);
-  const [vets, setVets] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<(typeof TAB_KEYS)[number]>("Overview");
+  const [pet, setPet] = useState<any | null | undefined>(undefined);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
-  // Overview
-  const [weights, setWeights] = useState<any[]>([]);
-  const [weightModal, setWeightModal] = useState(false);
-  const [weightForm, setWeightForm] = useState({ date: "", weightKg: "", notes: "" });
+  const [baseline, setBaseline] = useState<string>("");
 
-  // Medical: vet visits + meds
-  const [visits, setVisits] = useState<any[]>([]);
-  const [visitModal, setVisitModal] = useState(false);
-  const [visitForm, setVisitForm] = useState({
-    visitOn: "",
-    vetId: "",
-    reason: "",
-    diagnosis: "",
-    prognosis: "",
-    followUpOn: "",
-    notes: "",
-  });
-
-  const [meds, setMeds] = useState<any[]>([]);
-  const [medModal, setMedModal] = useState(false);
-  const [medForm, setMedForm] = useState({
+  const [form, setForm] = useState({
     name: "",
-    dosage: "",
-    frequencyPerDay: "2",
-    timesCsv: "09:00,21:00",
-    startOn: "",
-    endOn: "",
+    species: "Dog",
+    breed: "",
+    breedType: "Purebred" as BreedType,
+    breedComponents: ["", ""] as string[],
+    sex: "",
+    dob: "",
+    microchipNo: "",
+    temperament: "",
     notes: "",
   });
 
-  // Vaccines + parasite
-  const [vaccines, setVaccines] = useState<any[]>([]);
-  const [vacModal, setVacModal] = useState(false);
-  const [vacForm, setVacForm] = useState({
-    name: "",
-    administeredOn: "",
-    dueOn: "",
-    brand: "",
-    batchNo: "",
-    notes: "",
-  });
+  const isDirty = useMemo(() => {
+    if (!baseline) return false;
+    return comparableForm(form) !== baseline;
+  }, [baseline, form]);
 
-  const [parasites, setParasites] = useState<any[]>([]);
-  const [parModal, setParModal] = useState(false);
-  const [parForm, setParForm] = useState({
-    type: "DEWORMING",
-    product: "",
-    administeredOn: "",
-    dueOn: "",
-    dose: "",
-    notes: "",
-  });
+  const dogBreedOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const opts: string[] = [];
+    for (const b of BREEDS) {
+      const label = normalizeBreedLabel(b.label);
+      const k = label.toLowerCase();
+      if (!label || seen.has(k)) continue;
+      seen.add(k);
+      opts.push(label);
+    }
+    return opts;
+  }, []);
 
-  // Grooming
-  const [grooming, setGrooming] = useState<any[]>([]);
-  const [groomModal, setGroomModal] = useState(false);
-  const [groomForm, setGroomForm] = useState({
-    date: "",
-    service: "",
-    groomer: "",
-    coatCondition: "",
-    skinCondition: "",
-    nextDueOn: "",
-    notes: "",
-  });
+  const dogComponentOptions = useMemo(() => {
+    return dogBreedOptions.filter((b) => {
+      const l = b.toLowerCase();
+      return l !== "mix-breed" && l !== "cross-breed";
+    });
+  }, [dogBreedOptions]);
 
-  // Training
-  const [training, setTraining] = useState<any[]>([]);
-  const [trainModal, setTrainModal] = useState(false);
-  const [trainForm, setTrainForm] = useState({
-    date: "",
-    sessionType: "",
-    trainer: "",
-    focus: "",
-    progress: "",
-    homework: "",
-    nextSessionOn: "",
-  });
-
-  // Meals (single doc)
-  const [mealPlan, setMealPlan] = useState<any | null>(null);
-  const [mealSaving, setMealSaving] = useState(false);
-
-  // Activity
-  const [activities, setActivities] = useState<any[]>([]);
-  const [actModal, setActModal] = useState(false);
-  const [actForm, setActForm] = useState({
-    date: "",
-    type: "Walk",
-    durationMin: "30",
-    intensity: "Moderate",
-    notes: "",
-  });
-
-  // Transport
-  const [transport, setTransport] = useState<any[]>([]);
-  const [transModal, setTransModal] = useState(false);
-  const [transForm, setTransForm] = useState({
-    date: "",
-    purpose: "Vet visit",
-    from: "",
-    to: "",
-    pickupTime: "",
-    dropTime: "",
-    driver: "",
-    status: "Scheduled",
-    notes: "",
-  });
-
-  // Docs
-  const [docs, setDocs] = useState<any[]>([]);
-  const [docModal, setDocModal] = useState(false);
-  const [docForm, setDocForm] = useState({ kind: "Vaccination Card", notes: "" });
-  const [docFile, setDocFile] = useState<File | null>(null);
-  const [docUploading, setDocUploading] = useState(false);
+  const catComponentOptions = useMemo(() => CAT_BREEDS, []);
 
   useEffect(() => {
     async function load() {
-      const petRef = doc(db, "pets", petId);
-      const petSnap = await getDoc(petRef);
-      if (!petSnap.exists()) {
+      try {
+        const ref = doc(db, "pets", petId);
+        const snap = await getDoc(ref);
+
+        if (!snap.exists()) {
+          setPet(null);
+          return;
+        }
+
+        const data = { id: snap.id, ...snap.data() } as any;
+        setPet(data);
+
+        const species = (data?.species ?? "Dog") as string;
+        const breedLabel =
+          species === "Cat"
+            ? normalizeFreeTextBreed(data?.breed ?? "")
+            : normalizeBreedLabel(data?.breed ?? "");
+
+        const inferredType: BreedType =
+          (data?.breedType as BreedType) ??
+          (breedLabel ? getBreedTypeFromLabel(breedLabel) : "Purebred");
+
+        const compsRaw = Array.isArray(data?.breedComponents) ? data.breedComponents : [];
+        const compsNorm =
+          species === "Cat"
+            ? compsRaw.map((x: any) => normalizeFreeTextBreed(String(x ?? ""))).filter(Boolean)
+            : compsRaw.map((x: any) => normalizeBreedLabel(String(x ?? ""))).filter(Boolean);
+
+        const nextForm = {
+          name: data?.name ?? "",
+          species,
+          breed: breedLabel,
+          breedType: inferredType,
+          breedComponents: inferredType === "Purebred" ? ["", ""] : (compsNorm.length ? compsNorm : ["", ""]),
+          sex: data?.sex ?? "",
+          dob: tsToDateInput(data?.dob),
+          microchipNo: data?.microchipNo ?? "",
+          temperament: data?.temperament ?? "",
+          notes: data?.notes ?? "",
+        };
+
+        setForm(nextForm);
+        setBaseline(comparableForm(nextForm));
+        setMsg(null);
+        setErr(null);
+      } catch {
         setPet(null);
-        return;
       }
-
-      const petData = { id: petSnap.id, ...(petSnap.data() as any) } as any;
-      setPet(petData);
-
-      // client
-      const clientRef = doc(db, "clients", petData.clientId);
-      const clientSnap = await getDoc(clientRef);
-      setClient(clientSnap.exists() ? { id: clientSnap.id, ...clientSnap.data() } : null);
-
-      // vets list
-      const vSnap = await getDocs(query(collection(db, "vets"), orderBy("createdAt", "desc")));
-      setVets(vSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
     }
+
     load();
   }, [petId]);
 
-  // Subscribe only what we need (lazy by tab)
-  useEffect(() => {
-    if (!pet) return;
+  const selectedBreedRecord = useMemo(() => {
+    if (!form.breed) return undefined;
+    if (form.species !== "Dog") return undefined;
+    return findBreedRecordByLabel(normalizeBreedLabel(form.breed));
+  }, [form.breed, form.species]);
 
-    const unsubs: Array<() => void> = [];
+  const groupLine = useMemo(() => {
+    if (form.species !== "Dog") return "";
+    const parts: string[] = [];
+    const fci = formatFciText(selectedBreedRecord?.fci);
+    const akc = formatAkcText(selectedBreedRecord?.akc);
+    if (fci) parts.push(fci);
+    if (akc) parts.push(akc);
+    return parts.join(" • ");
+  }, [selectedBreedRecord, form.species]);
 
-    // Always subscribe to weights for overview chart (lightweight)
-    unsubs.push(
-      onSnapshot(query(collection(db, "pets", petId, "weights"), orderBy("weighedOn", "asc")), (snap) => {
-        setWeights(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
-      })
-    );
+  const catSelectValue = useMemo(() => {
+    return CAT_BREEDS.includes(form.breed) ? form.breed : "";
+  }, [form.breed]);
 
-    if (activeTab === "Medical") {
-      unsubs.push(
-        onSnapshot(query(collection(db, "pets", petId, "vetVisits"), orderBy("visitOn", "desc")), (snap) => {
-          setVisits(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
-        })
-      );
-      unsubs.push(
-        onSnapshot(query(collection(db, "pets", petId, "medications"), orderBy("createdAt", "desc")), (snap) => {
-          setMeds(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
-        })
-      );
+  const showCustomCatBreedInput = useMemo(() => {
+    // Show the custom input only if dropdown is blank/custom
+    return form.species === "Cat" && catSelectValue === "";
+  }, [form.species, catSelectValue]);
+
+  function onBreedChange(next: string) {
+    const cleaned =
+      form.species === "Cat" ? normalizeFreeTextBreed(next) : normalizeBreedLabel(next);
+
+    const nextType = getBreedTypeFromLabel(cleaned);
+
+    setForm((prev) => ({
+      ...prev,
+      breed: cleaned,
+      // For cats, we still let you choose breedType manually; don't auto-force here.
+      breedType: prev.breedType || nextType,
+    }));
+  }
+
+  function updateComponent(idx: number, value: string) {
+    const cleaned =
+      form.species === "Cat" ? normalizeFreeTextBreed(value) : normalizeBreedLabel(value);
+
+    setForm((prev) => {
+      const next = [...prev.breedComponents];
+      next[idx] = cleaned;
+      return { ...prev, breedComponents: next };
+    });
+  }
+
+  function addComponentRow() {
+    setForm((prev) => {
+      if (prev.breedComponents.length >= 4) return prev;
+      return { ...prev, breedComponents: [...prev.breedComponents, ""] };
+    });
+  }
+
+  function removeComponentRow(idx: number) {
+    setForm((prev) => {
+      const next = prev.breedComponents.filter((_, i) => i !== idx);
+      while ((prev.breedType === "Mix-breed" || prev.breedType === "Cross-breed") && next.length < 2) next.push("");
+      return { ...prev, breedComponents: next };
+    });
+  }
+
+  async function save() {
+    setErr(null);
+    setMsg(null);
+
+    const name = form.name.trim();
+    if (!name) {
+      setErr("Pet name is required.");
+      return;
     }
 
-    if (activeTab === "Vaccines & Parasites") {
-      unsubs.push(
-        onSnapshot(query(collection(db, "pets", petId, "vaccinations"), orderBy("administeredOn", "desc")), (snap) => {
-          setVaccines(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
-        })
-      );
-      unsubs.push(
-        onSnapshot(
-          query(collection(db, "pets", petId, "parasiteTreatments"), orderBy("administeredOn", "desc")),
-          (snap) => {
-            setParasites(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
-          }
-        )
-      );
+    const species = (form.species.trim() || "Dog") as string;
+
+    const normalizedBreed =
+      species === "Cat"
+        ? normalizeFreeTextBreed(form.breed)
+        : normalizeBreedLabel(form.breed);
+
+    const breedType = form.breedType;
+
+    const comps =
+      breedType === "Mix-breed" || breedType === "Cross-breed"
+        ? form.breedComponents
+            .map((x) => (species === "Cat" ? normalizeFreeTextBreed(x) : normalizeBreedLabel(x)))
+            .map((x) => x.trim())
+            .filter(Boolean)
+        : [];
+
+    if ((breedType === "Mix-breed" || breedType === "Cross-breed") && comps.length < 2) {
+      setErr("Select at least 2 component breeds for Mix-breed / Cross-breed.");
+      return;
     }
 
-    if (activeTab === "Grooming") {
-      unsubs.push(
-        onSnapshot(query(collection(db, "pets", petId, "grooming"), orderBy("date", "desc")), (snap) => {
-          setGrooming(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
-        })
-      );
-    }
-
-    if (activeTab === "Training") {
-      unsubs.push(
-        onSnapshot(query(collection(db, "pets", petId, "training"), orderBy("date", "desc")), (snap) => {
-          setTraining(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
-        })
-      );
-    }
-
-    if (activeTab === "Meals") {
-      const mealRef = doc(db, "pets", petId, "profile", "mealPlan");
-      getDoc(mealRef).then((s) => setMealPlan(s.exists() ? s.data() : null));
-    }
-
-    if (activeTab === "Activity") {
-      unsubs.push(
-        onSnapshot(query(collection(db, "pets", petId, "activities"), orderBy("date", "desc")), (snap) => {
-          setActivities(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
-        })
-      );
-    }
-
-    if (activeTab === "Transport") {
-      unsubs.push(
-        onSnapshot(query(collection(db, "pets", petId, "transport"), orderBy("date", "desc")), (snap) => {
-          setTransport(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
-        })
-      );
-    }
-
-    if (activeTab === "Documents") {
-      unsubs.push(
-        onSnapshot(query(collection(db, "pets", petId, "documents"), orderBy("uploadedAt", "desc")), (snap) => {
-          setDocs(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
-        })
-      );
-    }
-
-    return () => {
-      unsubs.forEach((u) => u());
+    const payload: any = {
+      name,
+      species,
+      sex: form.sex.trim() || "",
+      microchipNo: form.microchipNo.trim() || "",
+      temperament: form.temperament.trim() || "",
+      notes: form.notes.trim() || "",
+      updatedAt: Timestamp.now(),
+      breedType,
+      breed: normalizedBreed.trim() || "",
+      breedComponents: comps,
     };
-  }, [activeTab, pet, petId]);
 
-  const ageText = useMemo(() => {
-    if (!pet?.dob) return "—";
-    const dob = pet.dob.toDate ? pet.dob.toDate() : new Date(pet.dob);
-    const y = differenceInYears(new Date(), dob);
-    const m = differenceInMonths(new Date(), dob) % 12;
-    if (y <= 0) return `${m} months`;
-    return `${y}y ${m}m`;
-  }, [pet?.dob]);
-
-  const latestWeight = useMemo(() => {
-    if (!weights.length) return null;
-    const last = weights[weights.length - 1];
-    return last?.weightKg ?? null;
-  }, [weights]);
-
-  const genderText = useMemo(() => {
-    // Backward compatible: old field `sex`, new field `gender`
-    return (pet?.gender ?? pet?.sex ?? "—") as string;
-  }, [pet?.gender, pet?.sex]);
-
-  const whatsappHref = useMemo(() => {
-    // Your client field is "Phone" (capital P). Also accept "phone" just in case.
-    const raw = String(client?.Phone ?? client?.phone ?? "").trim();
-    const e164 = normalizeToE164(raw, "91");
-    if (!e164) return null;
-
-    const msg = `Hi ${client?.name ?? ""}. This is Beauty in the Beast. Update about ${pet?.name ?? "your pet"}: `;
-    return buildWhatsAppLink(e164, msg);
-  }, [client?.Phone, client?.phone, client?.name, pet?.name]);
-
-  async function setPrimaryVet(vetId: string) {
-    if (!pet) return;
-    await updateDoc(doc(db, "pets", petId), { vetId: vetId || null, updatedAt: Timestamp.now() });
-    setPet({ ...pet, vetId: vetId || null });
-  }
-
-  async function addWeight() {
-    if (!weightForm.weightKg) return;
-    const dt = weightForm.date ? new Date(weightForm.date) : new Date();
-    await addDoc(collection(db, "pets", petId, "weights"), {
-      weighedOn: Timestamp.fromDate(dt),
-      weightKg: Number(weightForm.weightKg),
-      notes: weightForm.notes.trim() || null,
-      createdAt: Timestamp.now(),
-    });
-    setWeightForm({ date: "", weightKg: "", notes: "" });
-    setWeightModal(false);
-  }
-
-  async function addVisit() {
-    if (!visitForm.visitOn) return;
-    const visitOn = Timestamp.fromDate(new Date(visitForm.visitOn));
-    const followUpOn = visitForm.followUpOn ? Timestamp.fromDate(new Date(visitForm.followUpOn)) : null;
-
-    await addDoc(collection(db, "pets", petId, "vetVisits"), {
-      visitOn,
-      vetId: visitForm.vetId || null,
-      reason: visitForm.reason.trim() || null,
-      diagnosis: visitForm.diagnosis.trim() || null,
-      prognosis: visitForm.prognosis.trim() || null,
-      followUpOn,
-      notes: visitForm.notes.trim() || null,
-      createdAt: Timestamp.now(),
-    });
-
-    if (followUpOn) {
-      await createReminderForDueDate({
-        petId,
-        type: "FOLLOW_UP",
-        title: `${pet?.name ?? "Pet"}: Follow-up vet visit`,
-        dueAt: followUpOn.toDate(),
-      });
+    if (form.dob?.trim()) {
+      const d = new Date(form.dob.trim());
+      payload.dob = isNaN(d.getTime()) ? null : Timestamp.fromDate(d);
+    } else {
+      payload.dob = null;
     }
 
-    setVisitForm({ visitOn: "", vetId: "", reason: "", diagnosis: "", prognosis: "", followUpOn: "", notes: "" });
-    setVisitModal(false);
-  }
-
-  async function addMedication() {
-    if (!medForm.name.trim() || !medForm.startOn) return;
-    const startOn = Timestamp.fromDate(new Date(medForm.startOn));
-    const endOn = medForm.endOn ? Timestamp.fromDate(new Date(medForm.endOn)) : null;
-
-    const times = medForm.timesCsv.split(",").map((s) => s.trim()).filter(Boolean);
-    const frequencyPerDay = Number(medForm.frequencyPerDay);
-
-    const medRef = await addDoc(collection(db, "pets", petId, "medications"), {
-      name: medForm.name.trim(),
-      dosage: medForm.dosage.trim() || null,
-      frequencyPerDay: Number.isFinite(frequencyPerDay) ? frequencyPerDay : times.length || 1,
-      times,
-      startOn,
-      endOn,
-      notes: medForm.notes.trim() || null,
-      active: true,
-      createdAt: Timestamp.now(),
-    });
-
-    await createMedicationReminders({
-      petId,
-      petName: pet?.name ?? "Pet",
-      medicationId: medRef.id,
-      name: medForm.name.trim(),
-      startOn: startOn.toDate(),
-      endOn: endOn?.toDate() ?? null,
-      times,
-      daysAhead: 14,
-    });
-
-    setMedForm({
-      name: "",
-      dosage: "",
-      frequencyPerDay: "2",
-      timesCsv: "09:00,21:00",
-      startOn: "",
-      endOn: "",
-      notes: "",
-    });
-    setMedModal(false);
-  }
-
-  async function addVaccination() {
-    if (!vacForm.name.trim() || !vacForm.administeredOn) return;
-    const administeredOn = Timestamp.fromDate(new Date(vacForm.administeredOn));
-    const dueOn = vacForm.dueOn ? Timestamp.fromDate(new Date(vacForm.dueOn)) : null;
-
-    await addDoc(collection(db, "pets", petId, "vaccinations"), {
-      name: vacForm.name.trim(),
-      administeredOn,
-      dueOn,
-      brand: vacForm.brand.trim() || null,
-      batchNo: vacForm.batchNo.trim() || null,
-      notes: vacForm.notes.trim() || null,
-      createdAt: Timestamp.now(),
-    });
-
-    if (dueOn) {
-      await createReminderForDueDate({
-        petId,
-        type: "VACCINATION_DUE",
-        title: `${pet?.name ?? "Pet"}: ${vacForm.name.trim()} due`,
-        dueAt: dueOn.toDate(),
-      });
-    }
-
-    setVacForm({ name: "", administeredOn: "", dueOn: "", brand: "", batchNo: "", notes: "" });
-    setVacModal(false);
-  }
-
-  async function addParasite() {
-    if (!parForm.product.trim() || !parForm.administeredOn) return;
-    const administeredOn = Timestamp.fromDate(new Date(parForm.administeredOn));
-    const dueOn = parForm.dueOn ? Timestamp.fromDate(new Date(parForm.dueOn)) : null;
-
-    await addDoc(collection(db, "pets", petId, "parasiteTreatments"), {
-      type: parForm.type,
-      product: parForm.product.trim(),
-      administeredOn,
-      dueOn,
-      dose: parForm.dose.trim() || null,
-      notes: parForm.notes.trim() || null,
-      createdAt: Timestamp.now(),
-    });
-
-    if (dueOn) {
-      await createReminderForDueDate({
-        petId,
-        type: parForm.type === "DEWORMING" ? "DEWORMING_DUE" : "SPOTON_DUE",
-        title: `${pet?.name ?? "Pet"}: ${parForm.type === "DEWORMING" ? "Deworming" : "Spot-on"} due`,
-        dueAt: dueOn.toDate(),
-      });
-    }
-
-    setParForm({ type: "DEWORMING", product: "", administeredOn: "", dueOn: "", dose: "", notes: "" });
-    setParModal(false);
-  }
-
-  async function addGrooming() {
-    if (!groomForm.date) return;
-    const date = Timestamp.fromDate(new Date(groomForm.date));
-    const nextDueOn = groomForm.nextDueOn ? Timestamp.fromDate(new Date(groomForm.nextDueOn)) : null;
-
-    await addDoc(collection(db, "pets", petId, "grooming"), {
-      date,
-      service: groomForm.service.trim() || null,
-      groomer: groomForm.groomer.trim() || null,
-      coatCondition: groomForm.coatCondition.trim() || null,
-      skinCondition: groomForm.skinCondition.trim() || null,
-      nextDueOn,
-      notes: groomForm.notes.trim() || null,
-      createdAt: Timestamp.now(),
-    });
-
-    if (nextDueOn) {
-      await createReminderForDueDate({
-        petId,
-        type: "GROOMING_DUE",
-        title: `${pet?.name ?? "Pet"}: Grooming follow-up`,
-        dueAt: nextDueOn.toDate(),
-      });
-    }
-
-    setGroomForm({ date: "", service: "", groomer: "", coatCondition: "", skinCondition: "", nextDueOn: "", notes: "" });
-    setGroomModal(false);
-  }
-
-  async function addTraining() {
-    if (!trainForm.date) return;
-    const date = Timestamp.fromDate(new Date(trainForm.date));
-    const nextSessionOn = trainForm.nextSessionOn ? Timestamp.fromDate(new Date(trainForm.nextSessionOn)) : null;
-
-    await addDoc(collection(db, "pets", petId, "training"), {
-      date,
-      sessionType: trainForm.sessionType.trim() || null,
-      trainer: trainForm.trainer.trim() || null,
-      focus: trainForm.focus.trim() || null,
-      progress: trainForm.progress.trim() || null,
-      homework: trainForm.homework.trim() || null,
-      nextSessionOn,
-      createdAt: Timestamp.now(),
-    });
-
-    if (nextSessionOn) {
-      await createReminderForDueDate({
-        petId,
-        type: "TRAINING_DUE",
-        title: `${pet?.name ?? "Pet"}: Training session`,
-        dueAt: nextSessionOn.toDate(),
-      });
-    }
-
-    setTrainForm({ date: "", sessionType: "", trainer: "", focus: "", progress: "", homework: "", nextSessionOn: "" });
-    setTrainModal(false);
-  }
-
-  async function addActivity() {
-    if (!actForm.date) return;
-    await addDoc(collection(db, "pets", petId, "activities"), {
-      date: Timestamp.fromDate(new Date(actForm.date)),
-      type: actForm.type,
-      durationMin: Number(actForm.durationMin),
-      intensity: actForm.intensity,
-      notes: actForm.notes.trim() || null,
-      createdAt: Timestamp.now(),
-    });
-    setActForm({ date: "", type: "Walk", durationMin: "30", intensity: "Moderate", notes: "" });
-    setActModal(false);
-  }
-
-  async function addTransport() {
-    if (!transForm.date) return;
-    await addDoc(collection(db, "pets", petId, "transport"), {
-      date: Timestamp.fromDate(new Date(transForm.date)),
-      purpose: transForm.purpose.trim() || null,
-      from: transForm.from.trim() || null,
-      to: transForm.to.trim() || null,
-      pickupTime: transForm.pickupTime || null,
-      dropTime: transForm.dropTime || null,
-      driver: transForm.driver.trim() || null,
-      status: transForm.status,
-      notes: transForm.notes.trim() || null,
-      createdAt: Timestamp.now(),
-    });
-    setTransForm({
-      date: "",
-      purpose: "Vet visit",
-      from: "",
-      to: "",
-      pickupTime: "",
-      dropTime: "",
-      driver: "",
-      status: "Scheduled",
-      notes: "",
-    });
-    setTransModal(false);
-  }
-
-  async function uploadDocument() {
-    if (!docFile) return;
-    setDocUploading(true);
+    setSaving(true);
     try {
-      const fileExt = docFile.name.split(".").pop() ?? "file";
-      const storagePath = `pets/${petId}/${Date.now()}-${Math.random().toString(16).slice(2)}.${fileExt}`;
-      const r = ref(storage, storagePath);
-      await uploadBytes(r, docFile);
-      const url = await getDownloadURL(r);
+      const ref = doc(db, "pets", petId);
+      await updateDoc(ref, payload);
 
-      await addDoc(collection(db, "pets", petId, "documents"), {
-        kind: docForm.kind,
-        filename: docFile.name,
-        storagePath,
-        url,
-        notes: docForm.notes.trim() || null,
-        uploadedAt: Timestamp.now(),
-      });
+      const postSaveForm = {
+        ...form,
+        name,
+        species,
+        breedType,
+        breed: normalizedBreed,
+        breedComponents: breedType === "Purebred" ? ["", ""] : (comps.length ? comps : ["", ""]),
+      };
 
-      setDocFile(null);
-      setDocForm({ kind: "Vaccination Card", notes: "" });
-      setDocModal(false);
+      setForm(postSaveForm);
+      setBaseline(comparableForm(postSaveForm));
+      setMsg("Saved.");
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to save.");
     } finally {
-      setDocUploading(false);
+      setSaving(false);
     }
   }
 
-  async function del(sub: string, id: string) {
-    await deleteDoc(doc(db, "pets", petId, sub, id));
+  if (pet === undefined) {
+    return (
+      <main className="p-6">
+        <p className="text-sm text-neutral-600">Loading…</p>
+      </main>
+    );
   }
 
   if (pet === null) {
@@ -637,837 +441,249 @@ export default function PetDetailPage() {
     );
   }
 
+  const buttonText = saving ? "Saving..." : (!isDirty && baseline ? "Saved" : "Save changes");
+  const ageLabel = calcAgeLabel(form.dob);
+
+  const componentOptions = form.species === "Cat" ? catComponentOptions : dogComponentOptions;
+
   return (
     <main className="p-6 space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <Link className="text-sm underline" href={client ? `/clients/${client.id}` : "/pets"}>
+          <Link className="text-sm underline" href="/pets">
             ← Back
           </Link>
-          <h1 className="text-2xl font-semibold mt-2">{pet?.name ?? "Pet"}</h1>
+          <h1 className="text-2xl font-semibold mt-2">Pet profile</h1>
           <p className="text-sm text-neutral-600 mt-1">
-            Pet parent: {client?.name ?? "—"} • Breed: {pet?.breed ?? "—"} • Age: {ageText} • Microchip:{" "}
-            {pet?.microchipNo ?? "—"}
+            ID: <span className="font-mono text-xs">{petId}</span>
+            {pet?.clientId ? (
+              <>
+                {" "}•{" "}
+                <Link className="underline" href={`/clients/${pet.clientId}`}>
+                  Client
+                </Link>
+              </>
+            ) : null}
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="text-sm">
-            <span className="text-neutral-600">Primary Vet:</span>{" "}
-            <select className="border rounded-lg p-2 text-sm" value={pet?.vetId ?? ""} onChange={(e) => setPrimaryVet(e.target.value)}>
-              <option value="">—</option>
-              {vets.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {whatsappHref ? (
-            <a className="rounded-lg bg-black text-white px-3 py-2 text-sm" href={whatsappHref} target="_blank" rel="noreferrer">
-              WhatsApp pet parent
-            </a>
-          ) : (
-            <button
-              className="rounded-lg border px-3 py-2 text-sm opacity-60 cursor-not-allowed"
-              disabled
-              title='Add client "Phone" to enable WhatsApp'
-            >
-              WhatsApp pet parent
-            </button>
-          )}
-        </div>
+        <button
+          onClick={save}
+          className="rounded-lg bg-black text-white px-4 py-2 disabled:opacity-60"
+          disabled={saving || (!!baseline && !isDirty)}
+        >
+          {buttonText}
+        </button>
       </div>
 
-      <Tabs tabs={TAB_KEYS as any} active={activeTab} onChange={(t) => setActiveTab(t)} />
+      <div className="border rounded-2xl p-4 max-w-3xl">
+        <div className="grid md:grid-cols-2 gap-3">
+          <Field label="Pet name *">
+            <input
+              className="w-full border rounded-lg p-2"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+            />
+          </Field>
 
-      {activeTab === "Overview" ? (
-        <section className="grid lg:grid-cols-[1fr_420px] gap-4">
-          <div className="border rounded-2xl p-4">
-            <h2 className="font-semibold">Weight tracking</h2>
-            <p className="text-sm text-neutral-600 mt-1">Latest: {latestWeight ? `${latestWeight} kg` : "—"}</p>
-            <div className="mt-3">
-              <WeightChart
-                data={weights.map((w) => ({
-                  date: format(w.weighedOn?.toDate?.() ?? new Date(), "dd MMM"),
-                  weightKg: w.weightKg,
-                }))}
-              />
-            </div>
-            <button className="mt-4 rounded-lg border px-3 py-2 text-sm" onClick={() => setWeightModal(true)}>
-              Add weight
-            </button>
-          </div>
-
-          <div className="border rounded-2xl p-4">
-            <h2 className="font-semibold">Quick info</h2>
-            <div className="mt-3 space-y-2 text-sm">
-              <Row k="Gender" v={genderText} />
-              <Row k="Species" v={pet?.species ?? "Dog"} />
-              <Row k="Temperament" v={pet?.temperament ?? "—"} />
-              <Row k="Notes" v={pet?.notes ?? "—"} />
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      {/* Medical */}
-      {activeTab === "Medical" ? (
-        <section className="grid lg:grid-cols-2 gap-4">
-          <div className="border rounded-2xl p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold">Vet visits</h2>
-              <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setVisitModal(true)}>
-                Add
-              </button>
-            </div>
-            <div className="mt-3 space-y-2">
-              {visits.length === 0 ? (
-                <p className="text-sm text-neutral-600">No visits yet.</p>
-              ) : (
-                visits.map((v) => (
-                  <div key={v.id} className="border rounded-xl p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium">{v.reason ?? "Vet visit"}</p>
-                        <p className="text-xs text-neutral-600 mt-0.5">
-                          {format(v.visitOn.toDate(), "dd MMM yyyy")} • Vet:{" "}
-                          {vets.find((x) => x.id === v.vetId)?.name ?? "—"}
-                          {v.followUpOn ? ` • Follow-up ${format(v.followUpOn.toDate(), "dd MMM yyyy")}` : ""}
-                        </p>
-                        {v.diagnosis ? (
-                          <p className="text-xs mt-2">
-                            <span className="text-neutral-600">Dx:</span> {v.diagnosis}
-                          </p>
-                        ) : null}
-                        {v.prognosis ? (
-                          <p className="text-xs mt-1">
-                            <span className="text-neutral-600">Prognosis:</span> {v.prognosis}
-                          </p>
-                        ) : null}
-                        {v.notes ? <p className="text-xs mt-1 text-neutral-600">{v.notes}</p> : null}
-                      </div>
-                      <button className="text-xs underline text-red-600" onClick={() => del("vetVisits", v.id)}>
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="border rounded-2xl p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold">Medications</h2>
-              <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setMedModal(true)}>
-                Add
-              </button>
-            </div>
-            <p className="text-sm text-neutral-600 mt-1">This generates in-app reminders for the next 14 days. WhatsApp/SMS later.</p>
-            <div className="mt-3 space-y-2">
-              {meds.length === 0 ? (
-                <p className="text-sm text-neutral-600">No medications.</p>
-              ) : (
-                meds.map((m) => (
-                  <div key={m.id} className="border rounded-xl p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium">{m.name}</p>
-                        <p className="text-xs text-neutral-600 mt-0.5">
-                          {m.dosage ? `${m.dosage} • ` : ""}
-                          {m.frequencyPerDay ?? 1}x/day • {Array.isArray(m.times) ? m.times.join(", ") : "—"}
-                        </p>
-                        <p className="text-xs text-neutral-600 mt-0.5">
-                          Start {m.startOn ? format(m.startOn.toDate(), "dd MMM yyyy") : "—"}
-                          {m.endOn ? ` • End ${format(m.endOn.toDate(), "dd MMM yyyy")}` : ""}
-                        </p>
-                        {m.notes ? <p className="text-xs mt-1 text-neutral-600">{m.notes}</p> : null}
-                      </div>
-                      <button className="text-xs underline text-red-600" onClick={() => del("medications", m.id)}>
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      {/* Vaccines & Parasites */}
-      {activeTab === "Vaccines & Parasites" ? (
-        <section className="grid lg:grid-cols-2 gap-4">
-          <div className="border rounded-2xl p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold">Vaccinations</h2>
-              <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setVacModal(true)}>
-                Add
-              </button>
-            </div>
-            <div className="mt-3 space-y-2">
-              {vaccines.length === 0 ? (
-                <p className="text-sm text-neutral-600">No vaccination records.</p>
-              ) : (
-                vaccines.map((v) => (
-                  <div key={v.id} className="border rounded-xl p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium">{v.name}</p>
-                        <p className="text-xs text-neutral-600 mt-0.5">
-                          Given {format(v.administeredOn.toDate(), "dd MMM yyyy")}
-                          {v.dueOn ? ` • Due ${format(v.dueOn.toDate(), "dd MMM yyyy")}` : ""}
-                        </p>
-                        {v.brand ? (
-                          <p className="text-xs text-neutral-600 mt-0.5">
-                            Brand: {v.brand} {v.batchNo ? `• Batch ${v.batchNo}` : ""}
-                          </p>
-                        ) : null}
-                        {v.notes ? <p className="text-xs mt-1 text-neutral-600">{v.notes}</p> : null}
-                      </div>
-                      <button className="text-xs underline text-red-600" onClick={() => del("vaccinations", v.id)}>
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="border rounded-2xl p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold">Deworming & Spot-on</h2>
-              <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setParModal(true)}>
-                Add
-              </button>
-            </div>
-            <div className="mt-3 space-y-2">
-              {parasites.length === 0 ? (
-                <p className="text-sm text-neutral-600">No parasite treatments.</p>
-              ) : (
-                parasites.map((p) => (
-                  <div key={p.id} className="border rounded-xl p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium">
-                          {p.type === "DEWORMING" ? "Deworming" : "Spot-on"} — {p.product}
-                        </p>
-                        <p className="text-xs text-neutral-600 mt-0.5">
-                          Given {format(p.administeredOn.toDate(), "dd MMM yyyy")}
-                          {p.dueOn ? ` • Due ${format(p.dueOn.toDate(), "dd MMM yyyy")}` : ""}
-                        </p>
-                        {p.dose ? <p className="text-xs text-neutral-600 mt-0.5">Dose: {p.dose}</p> : null}
-                        {p.notes ? <p className="text-xs mt-1 text-neutral-600">{p.notes}</p> : null}
-                      </div>
-                      <button className="text-xs underline text-red-600" onClick={() => del("parasiteTreatments", p.id)}>
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      {/* Grooming */}
-      {activeTab === "Grooming" ? (
-        <section className="border rounded-2xl p-4">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold">Grooming records</h2>
-            <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setGroomModal(true)}>
-              Add
-            </button>
-          </div>
-          <div className="mt-3 space-y-2">
-            {grooming.length === 0 ? (
-              <p className="text-sm text-neutral-600">No grooming records.</p>
-            ) : (
-              grooming.map((g) => (
-                <div key={g.id} className="border rounded-xl p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">{g.service ?? "Grooming"}</p>
-                      <p className="text-xs text-neutral-600 mt-0.5">
-                        {format(g.date.toDate(), "dd MMM yyyy")} • Groomer {g.groomer ?? "—"}
-                        {g.nextDueOn ? ` • Next due ${format(g.nextDueOn.toDate(), "dd MMM yyyy")}` : ""}
-                      </p>
-                      {g.coatCondition || g.skinCondition ? (
-                        <p className="text-xs text-neutral-600 mt-1">
-                          {g.coatCondition ? `Coat: ${g.coatCondition}` : ""}
-                          {g.coatCondition && g.skinCondition ? " • " : ""}
-                          {g.skinCondition ? `Skin: ${g.skinCondition}` : ""}
-                        </p>
-                      ) : null}
-                      {g.notes ? <p className="text-xs mt-1 text-neutral-600">{g.notes}</p> : null}
-                    </div>
-                    <button className="text-xs underline text-red-600" onClick={() => del("grooming", g.id)}>
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-      ) : null}
-
-      {/* Training */}
-      {activeTab === "Training" ? (
-        <section className="border rounded-2xl p-4">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold">Training sessions</h2>
-            <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setTrainModal(true)}>
-              Add
-            </button>
-          </div>
-          <div className="mt-3 space-y-2">
-            {training.length === 0 ? (
-              <p className="text-sm text-neutral-600">No training sessions.</p>
-            ) : (
-              training.map((t) => (
-                <div key={t.id} className="border rounded-xl p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">{t.sessionType ?? "Training"}</p>
-                      <p className="text-xs text-neutral-600 mt-0.5">
-                        {format(t.date.toDate(), "dd MMM yyyy")} • Trainer {t.trainer ?? "—"}
-                        {t.nextSessionOn ? ` • Next ${format(t.nextSessionOn.toDate(), "dd MMM yyyy")}` : ""}
-                      </p>
-                      {t.focus ? (
-                        <p className="text-xs mt-1">
-                          <span className="text-neutral-600">Focus:</span> {t.focus}
-                        </p>
-                      ) : null}
-                      {t.progress ? (
-                        <p className="text-xs mt-1">
-                          <span className="text-neutral-600">Progress:</span> {t.progress}
-                        </p>
-                      ) : null}
-                      {t.homework ? <p className="text-xs mt-1 text-neutral-600">Homework: {t.homework}</p> : null}
-                    </div>
-                    <button className="text-xs underline text-red-600" onClick={() => del("training", t.id)}>
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-      ) : null}
-
-      {/* Meals */}
-      {activeTab === "Meals" ? (
-        <section className="border rounded-2xl p-4">
-          <h2 className="font-semibold">Meal preferences & schedule</h2>
-          <p className="text-sm text-neutral-600 mt-1">
-            Prototype: saved as a single “meal plan” doc. You can store allergies, preferred proteins, timings, etc.
-          </p>
-
-          <div className="mt-4 grid lg:grid-cols-2 gap-4">
-            <Field label="Allergies / intolerances">
-              <textarea
-                className="w-full border rounded-lg p-2"
-                rows={4}
-                value={mealPlan?.allergies ?? ""}
-                onChange={(e) => setMealPlan({ ...(mealPlan ?? {}), allergies: e.target.value })}
-              />
-            </Field>
-
-            <Field label="Preferences (likes/dislikes)">
-              <textarea
-                className="w-full border rounded-lg p-2"
-                rows={4}
-                value={mealPlan?.preferences ?? ""}
-                onChange={(e) => setMealPlan({ ...(mealPlan ?? {}), preferences: e.target.value })}
-              />
-            </Field>
-
-            <Field label="Daily schedule (simple text)">
-              <textarea
-                className="w-full border rounded-lg p-2"
-                rows={6}
-                placeholder={"Example:\n08:00 - Breakfast: eggs + rice\n14:00 - Snack: chicken broth\n20:00 - Dinner: fish + pumpkin"}
-                value={mealPlan?.scheduleText ?? ""}
-                onChange={(e) => setMealPlan({ ...(mealPlan ?? {}), scheduleText: e.target.value })}
-              />
-            </Field>
-
-            <Field label="Notes">
-              <textarea
-                className="w-full border rounded-lg p-2"
-                rows={6}
-                value={mealPlan?.notes ?? ""}
-                onChange={(e) => setMealPlan({ ...(mealPlan ?? {}), notes: e.target.value })}
-              />
-            </Field>
-          </div>
-
-          <div className="mt-4 flex gap-2">
-            <button
-              className="rounded-lg bg-black text-white px-4 py-2 text-sm disabled:opacity-60"
-              disabled={mealSaving}
-              onClick={async () => {
-                setMealSaving(true);
-                try {
-                  const { setDoc } = await import("firebase/firestore");
-                  await setDoc(doc(db, "pets", petId, "profile", "mealPlan"), { ...(mealPlan ?? {}), updatedAt: Timestamp.now() }, { merge: true });
-                } finally {
-                  setMealSaving(false);
-                }
+          <Field label="Species">
+            <select
+              className="w-full border rounded-lg p-2"
+              value={form.species}
+              onChange={(e) => {
+                const next = e.target.value;
+                setForm((prev) => ({
+                  ...prev,
+                  species: next,
+                  breed: "",
+                  breedComponents: ["", ""],
+                }));
               }}
             >
-              {mealSaving ? "Saving..." : "Save meal plan"}
-            </button>
-          </div>
-        </section>
-      ) : null}
-
-      {/* Activity */}
-      {activeTab === "Activity" ? (
-        <section className="border rounded-2xl p-4">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold">Activity log</h2>
-            <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setActModal(true)}>
-              Add
-            </button>
-          </div>
-          <div className="mt-3 space-y-2">
-            {activities.length === 0 ? (
-              <p className="text-sm text-neutral-600">No activities.</p>
-            ) : (
-              activities.map((a) => (
-                <div key={a.id} className="border rounded-xl p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">
-                        {a.type} • {a.durationMin} min • {a.intensity}
-                      </p>
-                      <p className="text-xs text-neutral-600 mt-0.5">{format(a.date.toDate(), "dd MMM yyyy")}</p>
-                      {a.notes ? <p className="text-xs mt-1 text-neutral-600">{a.notes}</p> : null}
-                    </div>
-                    <button className="text-xs underline text-red-600" onClick={() => del("activities", a.id)}>
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-      ) : null}
-
-      {/* Transport */}
-      {activeTab === "Transport" ? (
-        <section className="border rounded-2xl p-4">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold">Pick-up / drop schedules</h2>
-            <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setTransModal(true)}>
-              Add
-            </button>
-          </div>
-          <div className="mt-3 space-y-2">
-            {transport.length === 0 ? (
-              <p className="text-sm text-neutral-600">No transport schedules.</p>
-            ) : (
-              transport.map((t) => (
-                <div key={t.id} className="border rounded-xl p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">
-                        {t.purpose ?? "Transport"} • {t.status}
-                      </p>
-                      <p className="text-xs text-neutral-600 mt-0.5">
-                        {format(t.date.toDate(), "dd MMM yyyy")}
-                        {t.pickupTime ? ` • Pickup ${t.pickupTime}` : ""}
-                        {t.dropTime ? ` • Drop ${t.dropTime}` : ""}
-                      </p>
-                      <p className="text-xs text-neutral-600 mt-0.5">
-                        {t.from ?? "—"} → {t.to ?? "—"} • Driver {t.driver ?? "—"}
-                      </p>
-                      {t.notes ? <p className="text-xs mt-1 text-neutral-600">{t.notes}</p> : null}
-                    </div>
-                    <button className="text-xs underline text-red-600" onClick={() => del("transport", t.id)}>
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-      ) : null}
-
-      {/* Documents */}
-      {activeTab === "Documents" ? (
-        <section className="border rounded-2xl p-4">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold">Documents vault</h2>
-            <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setDocModal(true)}>
-              Upload
-            </button>
-          </div>
-          <p className="text-sm text-neutral-600 mt-1">Upload vaccination cards, blood reports, prescriptions, certificates, etc.</p>
-          <div className="mt-3 space-y-2">
-            {docs.length === 0 ? (
-              <p className="text-sm text-neutral-600">No documents.</p>
-            ) : (
-              docs.map((d) => (
-                <div key={d.id} className="border rounded-xl p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">{d.kind}</p>
-                      <p className="text-xs text-neutral-600 mt-0.5">
-                        {d.filename} • {format(d.uploadedAt.toDate(), "dd MMM yyyy")}
-                      </p>
-                      {d.notes ? <p className="text-xs mt-1 text-neutral-600">{d.notes}</p> : null}
-                      <a className="text-xs underline mt-2 inline-block" href={d.url} target="_blank" rel="noreferrer">
-                        Open
-                      </a>
-                    </div>
-                    <button className="text-xs underline text-red-600" onClick={() => del("documents", d.id)}>
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-      ) : null}
-
-      {/* Modals */}
-      <Modal open={weightModal} onClose={() => setWeightModal(false)} title="Add weight entry">
-        <div className="space-y-2">
-          <Field label="Date">
-            <input type="date" className="w-full border rounded-lg p-2" value={weightForm.date} onChange={(e) => setWeightForm({ ...weightForm, date: e.target.value })} />
+              <option value="Dog">Dog</option>
+              <option value="Cat">Cat</option>
+              <option value="Other">Other</option>
+            </select>
           </Field>
-          <Field label="Weight (kg) *">
-            <input className="w-full border rounded-lg p-2" value={weightForm.weightKg} onChange={(e) => setWeightForm({ ...weightForm, weightKg: e.target.value })} />
+
+          <Field label="Breed">
+            {form.species === "Cat" ? (
+              <>
+                <select
+                  className="w-full border rounded-lg p-2"
+                  value={catSelectValue}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) {
+                      // user picked custom/blank; keep breed as-is (or empty)
+                      setForm((prev) => ({ ...prev, breed: prev.breed && !CAT_BREEDS.includes(prev.breed) ? prev.breed : "" }));
+                      return;
+                    }
+                    setForm((prev) => ({ ...prev, breed: v }));
+                  }}
+                >
+                  <option value="">— Custom / not in list —</option>
+                  {CAT_BREEDS.map((b) => (
+                    <option key={b} value={b}>
+                      {b}
+                    </option>
+                  ))}
+                </select>
+
+                {showCustomCatBreedInput ? (
+                  <input
+                    className="w-full border rounded-lg p-2 mt-2"
+                    value={form.breed}
+                    onChange={(e) => setForm((prev) => ({ ...prev, breed: normalizeFreeTextBreed(e.target.value) }))}
+                    placeholder="Type cat breed/type (e.g., Domestic Short Hair (DSH))"
+                  />
+                ) : null}
+              </>
+            ) : (
+              <>
+                <input
+                  className="w-full border rounded-lg p-2"
+                  list="breed-options"
+                  value={form.breed}
+                  onChange={(e) => onBreedChange(e.target.value)}
+                  placeholder="Type to search…"
+                />
+                <datalist id="breed-options">
+                  {dogBreedOptions.map((b) => (
+                    <option key={b} value={b} />
+                  ))}
+                </datalist>
+
+                {groupLine ? <p className="text-xs text-neutral-600 mt-1">{groupLine}</p> : null}
+              </>
+            )}
           </Field>
-          <Field label="Notes">
-            <textarea className="w-full border rounded-lg p-2" rows={3} value={weightForm.notes} onChange={(e) => setWeightForm({ ...weightForm, notes: e.target.value })} />
+
+          <Field label="Breed type">
+            <select
+              className="w-full border rounded-lg p-2"
+              value={form.breedType}
+              onChange={(e) => {
+                const nextType = e.target.value as BreedType;
+                setForm((prev) => ({
+                  ...prev,
+                  breedType: nextType,
+                  breedComponents: nextType === "Purebred" ? ["", ""] : (prev.breedComponents.length ? prev.breedComponents : ["", ""]),
+                }));
+              }}
+            >
+              <option value="Purebred">Purebred</option>
+              <option value="Mix-breed">Mix-breed</option>
+              <option value="Cross-breed">Cross-breed</option>
+            </select>
           </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addWeight}>
-            Save
-          </button>
         </div>
-      </Modal>
 
-      <Modal open={visitModal} onClose={() => setVisitModal(false)} title="Add vet visit">
-        <div className="space-y-2">
-          <Field label="Visit date *">
-            <input type="date" className="w-full border rounded-lg p-2" value={visitForm.visitOn} onChange={(e) => setVisitForm({ ...visitForm, visitOn: e.target.value })} />
-          </Field>
-          <Field label="Vet">
-            <select className="w-full border rounded-lg p-2" value={visitForm.vetId} onChange={(e) => setVisitForm({ ...visitForm, vetId: e.target.value })}>
+        {(form.breedType === "Mix-breed" || form.breedType === "Cross-breed") ? (
+          <div className="mt-4 border rounded-xl p-3 bg-neutral-50 space-y-2">
+            <p className="text-xs text-neutral-600">
+              {form.breedType} components (select at least 2)
+            </p>
+
+            {form.breedComponents.map((val, idx) => (
+              <div key={idx} className="flex gap-2">
+                <select
+                  className="flex-1 border rounded-lg p-2"
+                  value={val}
+                  onChange={(e) => updateComponent(idx, e.target.value)}
+                >
+                  <option value="">— Select breed/type —</option>
+                  {componentOptions.map((b) => (
+                    <option key={b} value={b}>
+                      {b}
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  type="button"
+                  className="border rounded-lg px-3 text-sm"
+                  onClick={() => removeComponentRow(idx)}
+                  title="Remove"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+
+            {form.breedComponents.length < 4 ? (
+              <button type="button" className="text-sm underline" onClick={addComponentRow}>
+                + Add another component
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="grid md:grid-cols-2 gap-3 mt-4">
+          <Field label="Gender">
+            <select
+              className="w-full border rounded-lg p-2"
+              value={form.sex}
+              onChange={(e) => setForm({ ...form, sex: e.target.value })}
+            >
               <option value="">—</option>
-              {vets.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.name}
-                </option>
-              ))}
+              <option value="Male">Male</option>
+              <option value="Female">Female</option>
             </select>
           </Field>
-          <Field label="Reason">
-            <input className="w-full border rounded-lg p-2" value={visitForm.reason} onChange={(e) => setVisitForm({ ...visitForm, reason: e.target.value })} />
-          </Field>
-          <Field label="Diagnosis">
-            <input className="w-full border rounded-lg p-2" value={visitForm.diagnosis} onChange={(e) => setVisitForm({ ...visitForm, diagnosis: e.target.value })} />
-          </Field>
-          <Field label="Prognosis">
-            <input className="w-full border rounded-lg p-2" value={visitForm.prognosis} onChange={(e) => setVisitForm({ ...visitForm, prognosis: e.target.value })} />
-          </Field>
-          <Field label="Follow-up date">
-            <input type="date" className="w-full border rounded-lg p-2" value={visitForm.followUpOn} onChange={(e) => setVisitForm({ ...visitForm, followUpOn: e.target.value })} />
-          </Field>
-          <Field label="Notes">
-            <textarea className="w-full border rounded-lg p-2" rows={3} value={visitForm.notes} onChange={(e) => setVisitForm({ ...visitForm, notes: e.target.value })} />
-          </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addVisit}>
-            Save
-          </button>
-        </div>
-      </Modal>
 
-      <Modal open={medModal} onClose={() => setMedModal(false)} title="Add medication">
-        <div className="space-y-2">
-          <Field label="Medication name *">
-            <input className="w-full border rounded-lg p-2" value={medForm.name} onChange={(e) => setMedForm({ ...medForm, name: e.target.value })} />
+          <Field label="Birthdate">
+            <>
+              <input
+                type="date"
+                className="w-full border rounded-lg p-2"
+                value={form.dob}
+                onChange={(e) => setForm({ ...form, dob: e.target.value })}
+              />
+              {ageLabel ? (
+                <p className="text-xs text-neutral-600 mt-1">{ageLabel}</p>
+              ) : null}
+            </>
           </Field>
-          <Field label="Dosage (e.g., 1 tab, 5 ml)">
-            <input className="w-full border rounded-lg p-2" value={medForm.dosage} onChange={(e) => setMedForm({ ...medForm, dosage: e.target.value })} />
-          </Field>
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Start date *">
-              <input type="date" className="w-full border rounded-lg p-2" value={medForm.startOn} onChange={(e) => setMedForm({ ...medForm, startOn: e.target.value })} />
-            </Field>
-            <Field label="End date (optional)">
-              <input type="date" className="w-full border rounded-lg p-2" value={medForm.endOn} onChange={(e) => setMedForm({ ...medForm, endOn: e.target.value })} />
-            </Field>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Times (HH:MM, comma-separated)">
-              <input className="w-full border rounded-lg p-2" value={medForm.timesCsv} onChange={(e) => setMedForm({ ...medForm, timesCsv: e.target.value })} />
-            </Field>
-            <Field label="Frequency/day (optional)">
-              <input className="w-full border rounded-lg p-2" value={medForm.frequencyPerDay} onChange={(e) => setMedForm({ ...medForm, frequencyPerDay: e.target.value })} />
-            </Field>
-          </div>
-          <Field label="Notes">
-            <textarea className="w-full border rounded-lg p-2" rows={3} value={medForm.notes} onChange={(e) => setMedForm({ ...medForm, notes: e.target.value })} />
-          </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addMedication}>
-            Save + create reminders
-          </button>
-        </div>
-      </Modal>
 
-      <Modal open={vacModal} onClose={() => setVacModal(false)} title="Add vaccination">
-        <div className="space-y-2">
-          <Field label="Vaccine name *">
-            <input className="w-full border rounded-lg p-2" value={vacForm.name} onChange={(e) => setVacForm({ ...vacForm, name: e.target.value })} />
+          <Field label="Microchip #">
+            <input
+              className="w-full border rounded-lg p-2"
+              value={form.microchipNo}
+              onChange={(e) => setForm({ ...form, microchipNo: e.target.value })}
+            />
           </Field>
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Administered on *">
-              <input type="date" className="w-full border rounded-lg p-2" value={vacForm.administeredOn} onChange={(e) => setVacForm({ ...vacForm, administeredOn: e.target.value })} />
-            </Field>
-            <Field label="Next due on">
-              <input type="date" className="w-full border rounded-lg p-2" value={vacForm.dueOn} onChange={(e) => setVacForm({ ...vacForm, dueOn: e.target.value })} />
-            </Field>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Brand">
-              <input className="w-full border rounded-lg p-2" value={vacForm.brand} onChange={(e) => setVacForm({ ...vacForm, brand: e.target.value })} />
-            </Field>
-            <Field label="Batch #">
-              <input className="w-full border rounded-lg p-2" value={vacForm.batchNo} onChange={(e) => setVacForm({ ...vacForm, batchNo: e.target.value })} />
-            </Field>
-          </div>
-          <Field label="Notes">
-            <textarea className="w-full border rounded-lg p-2" rows={3} value={vacForm.notes} onChange={(e) => setVacForm({ ...vacForm, notes: e.target.value })} />
-          </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addVaccination}>
-            Save
-          </button>
-        </div>
-      </Modal>
 
-      <Modal open={parModal} onClose={() => setParModal(false)} title="Add deworming / spot-on">
-        <div className="space-y-2">
-          <Field label="Type">
-            <select className="w-full border rounded-lg p-2" value={parForm.type} onChange={(e) => setParForm({ ...parForm, type: e.target.value as any })}>
-              <option value="DEWORMING">Deworming</option>
-              <option value="SPOT_ON">Spot-on</option>
-            </select>
+          <Field label="Temperament">
+            <input
+              className="w-full border rounded-lg p-2"
+              value={form.temperament}
+              onChange={(e) => setForm({ ...form, temperament: e.target.value })}
+            />
           </Field>
-          <Field label="Product *">
-            <input className="w-full border rounded-lg p-2" value={parForm.product} onChange={(e) => setParForm({ ...parForm, product: e.target.value })} />
-          </Field>
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Administered on *">
-              <input type="date" className="w-full border rounded-lg p-2" value={parForm.administeredOn} onChange={(e) => setParForm({ ...parForm, administeredOn: e.target.value })} />
-            </Field>
-            <Field label="Next due on">
-              <input type="date" className="w-full border rounded-lg p-2" value={parForm.dueOn} onChange={(e) => setParForm({ ...parForm, dueOn: e.target.value })} />
-            </Field>
-          </div>
-          <Field label="Dose">
-            <input className="w-full border rounded-lg p-2" value={parForm.dose} onChange={(e) => setParForm({ ...parForm, dose: e.target.value })} />
-          </Field>
-          <Field label="Notes">
-            <textarea className="w-full border rounded-lg p-2" rows={3} value={parForm.notes} onChange={(e) => setParForm({ ...parForm, notes: e.target.value })} />
-          </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addParasite}>
-            Save
-          </button>
         </div>
-      </Modal>
 
-      <Modal open={groomModal} onClose={() => setGroomModal(false)} title="Add grooming record">
-        <div className="space-y-2">
-          <Field label="Date *">
-            <input type="date" className="w-full border rounded-lg p-2" value={groomForm.date} onChange={(e) => setGroomForm({ ...groomForm, date: e.target.value })} />
-          </Field>
-          <Field label="Service">
-            <input className="w-full border rounded-lg p-2" value={groomForm.service} onChange={(e) => setGroomForm({ ...groomForm, service: e.target.value })} />
-          </Field>
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Groomer">
-              <input className="w-full border rounded-lg p-2" value={groomForm.groomer} onChange={(e) => setGroomForm({ ...groomForm, groomer: e.target.value })} />
-            </Field>
-            <Field label="Next due on">
-              <input type="date" className="w-full border rounded-lg p-2" value={groomForm.nextDueOn} onChange={(e) => setGroomForm({ ...groomForm, nextDueOn: e.target.value })} />
-            </Field>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Coat condition">
-              <input className="w-full border rounded-lg p-2" value={groomForm.coatCondition} onChange={(e) => setGroomForm({ ...groomForm, coatCondition: e.target.value })} />
-            </Field>
-            <Field label="Skin condition">
-              <input className="w-full border rounded-lg p-2" value={groomForm.skinCondition} onChange={(e) => setGroomForm({ ...groomForm, skinCondition: e.target.value })} />
-            </Field>
-          </div>
-          <Field label="Notes">
-            <textarea className="w-full border rounded-lg p-2" rows={3} value={groomForm.notes} onChange={(e) => setGroomForm({ ...groomForm, notes: e.target.value })} />
-          </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addGrooming}>
-            Save
-          </button>
-        </div>
-      </Modal>
+        <Field label="Notes">
+          <textarea
+            className="w-full border rounded-lg p-2 mt-1"
+            rows={4}
+            value={form.notes}
+            onChange={(e) => setForm({ ...form, notes: e.target.value })}
+          />
+        </Field>
 
-      <Modal open={trainModal} onClose={() => setTrainModal(false)} title="Add training session">
-        <div className="space-y-2">
-          <Field label="Date *">
-            <input type="date" className="w-full border rounded-lg p-2" value={trainForm.date} onChange={(e) => setTrainForm({ ...trainForm, date: e.target.value })} />
-          </Field>
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Session type">
-              <input className="w-full border rounded-lg p-2" value={trainForm.sessionType} onChange={(e) => setTrainForm({ ...trainForm, sessionType: e.target.value })} />
-            </Field>
-            <Field label="Trainer">
-              <input className="w-full border rounded-lg p-2" value={trainForm.trainer} onChange={(e) => setTrainForm({ ...trainForm, trainer: e.target.value })} />
-            </Field>
-          </div>
-          <Field label="Focus">
-            <input className="w-full border rounded-lg p-2" value={trainForm.focus} onChange={(e) => setTrainForm({ ...trainForm, focus: e.target.value })} />
-          </Field>
-          <Field label="Progress">
-            <textarea className="w-full border rounded-lg p-2" rows={3} value={trainForm.progress} onChange={(e) => setTrainForm({ ...trainForm, progress: e.target.value })} />
-          </Field>
-          <Field label="Homework">
-            <textarea className="w-full border rounded-lg p-2" rows={3} value={trainForm.homework} onChange={(e) => setTrainForm({ ...trainForm, homework: e.target.value })} />
-          </Field>
-          <Field label="Next session on">
-            <input type="date" className="w-full border rounded-lg p-2" value={trainForm.nextSessionOn} onChange={(e) => setTrainForm({ ...trainForm, nextSessionOn: e.target.value })} />
-          </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addTraining}>
-            Save
-          </button>
-        </div>
-      </Modal>
-
-      <Modal open={actModal} onClose={() => setActModal(false)} title="Add activity">
-        <div className="space-y-2">
-          <Field label="Date *">
-            <input type="date" className="w-full border rounded-lg p-2" value={actForm.date} onChange={(e) => setActForm({ ...actForm, date: e.target.value })} />
-          </Field>
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Type">
-              <input className="w-full border rounded-lg p-2" value={actForm.type} onChange={(e) => setActForm({ ...actForm, type: e.target.value })} />
-            </Field>
-            <Field label="Duration (min)">
-              <input className="w-full border rounded-lg p-2" value={actForm.durationMin} onChange={(e) => setActForm({ ...actForm, durationMin: e.target.value })} />
-            </Field>
-          </div>
-          <Field label="Intensity">
-            <select className="w-full border rounded-lg p-2" value={actForm.intensity} onChange={(e) => setActForm({ ...actForm, intensity: e.target.value })}>
-              <option>Low</option>
-              <option>Moderate</option>
-              <option>High</option>
-            </select>
-          </Field>
-          <Field label="Notes">
-            <textarea className="w-full border rounded-lg p-2" rows={3} value={actForm.notes} onChange={(e) => setActForm({ ...actForm, notes: e.target.value })} />
-          </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addActivity}>
-            Save
-          </button>
-        </div>
-      </Modal>
-
-      <Modal open={transModal} onClose={() => setTransModal(false)} title="Add pick-up / drop schedule">
-        <div className="space-y-2">
-          <Field label="Date *">
-            <input type="date" className="w-full border rounded-lg p-2" value={transForm.date} onChange={(e) => setTransForm({ ...transForm, date: e.target.value })} />
-          </Field>
-          <Field label="Purpose">
-            <input className="w-full border rounded-lg p-2" value={transForm.purpose} onChange={(e) => setTransForm({ ...transForm, purpose: e.target.value })} />
-          </Field>
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Pickup time">
-              <input className="w-full border rounded-lg p-2" placeholder="09:30" value={transForm.pickupTime} onChange={(e) => setTransForm({ ...transForm, pickupTime: e.target.value })} />
-            </Field>
-            <Field label="Drop time">
-              <input className="w-full border rounded-lg p-2" placeholder="13:00" value={transForm.dropTime} onChange={(e) => setTransForm({ ...transForm, dropTime: e.target.value })} />
-            </Field>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="From">
-              <input className="w-full border rounded-lg p-2" value={transForm.from} onChange={(e) => setTransForm({ ...transForm, from: e.target.value })} />
-            </Field>
-            <Field label="To">
-              <input className="w-full border rounded-lg p-2" value={transForm.to} onChange={(e) => setTransForm({ ...transForm, to: e.target.value })} />
-            </Field>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Driver">
-              <input className="w-full border rounded-lg p-2" value={transForm.driver} onChange={(e) => setTransForm({ ...transForm, driver: e.target.value })} />
-            </Field>
-            <Field label="Status">
-              <select className="w-full border rounded-lg p-2" value={transForm.status} onChange={(e) => setTransForm({ ...transForm, status: e.target.value })}>
-                <option>Scheduled</option>
-                <option>In progress</option>
-                <option>Completed</option>
-                <option>Cancelled</option>
-              </select>
-            </Field>
-          </div>
-          <Field label="Notes">
-            <textarea className="w-full border rounded-lg p-2" rows={3} value={transForm.notes} onChange={(e) => setTransForm({ ...transForm, notes: e.target.value })} />
-          </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2" onClick={addTransport}>
-            Save
-          </button>
-        </div>
-      </Modal>
-
-      <Modal open={docModal} onClose={() => setDocModal(false)} title="Upload document">
-        <div className="space-y-2">
-          <Field label="Kind">
-            <select className="w-full border rounded-lg p-2" value={docForm.kind} onChange={(e) => setDocForm({ ...docForm, kind: e.target.value })}>
-              {["Vaccination Card", "Blood Report", "Prescription", "X-ray / Scan", "Certificate", "Photo", "Other"].map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="File *">
-            <input type="file" className="w-full" onChange={(e) => setDocFile(e.target.files?.[0] ?? null)} />
-          </Field>
-          <Field label="Notes">
-            <textarea className="w-full border rounded-lg p-2" rows={3} value={docForm.notes} onChange={(e) => setDocForm({ ...docForm, notes: e.target.value })} />
-          </Field>
-          <button className="w-full rounded-lg bg-black text-white py-2 disabled:opacity-60" disabled={docUploading} onClick={uploadDocument}>
-            {docUploading ? "Uploading..." : "Upload"}
-          </button>
-        </div>
-      </Modal>
+        {err ? <p className="text-sm text-red-600 mt-3">{err}</p> : null}
+        {msg ? <p className="text-sm text-green-700 mt-3">{msg}</p> : null}
+      </div>
     </main>
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="block">
+    <label className="block mt-3">
       <span className="text-xs text-neutral-600">{label}</span>
       <div className="mt-1">{children}</div>
     </label>
-  );
-}
-
-function Row({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="flex items-start justify-between gap-3">
-      <span className="text-neutral-600">{k}</span>
-      <span className="text-right">{v}</span>
-    </div>
   );
 }

@@ -1,49 +1,21 @@
 // src/lib/breeds.ts
+// Wrapper so the app can keep importing from "@/lib/breeds"
 
-export type BreedType = "Purebred" | "Mix-breed" | "Cross-breed";
+export type { BreedType, BreedRecord } from "./breeds.generated";
+export { BREEDS } from "./breeds.generated";
 
-export type BreedRecord = {
-  key: string;          // stable internal key (slug)
-  label: string;        // what user sees/selects
-  aliases?: string[];   // optional alternate spellings/names
-  sources: Array<"FCI" | "AKC">;
-  fci?: { groupNo: number; groupName: string };
-  akc?: { groupName: string };
-};
-
+// These are app-specific options (not part of FCI/AKC datasets)
 export const SPECIAL_BREEDS = [
   "Indie (Indian Pariah)",
   "Mix-breed",
   "Cross-breed",
 ] as const;
 
-export const BREEDS: BreedRecord[] = [
-  {
-    key: "indie-indian-pariah",
-    label: "Indie (Indian Pariah)",
-    sources: [],
-  },
-  {
-    key: "golden-retriever",
-    label: "Golden Retriever",
-    sources: ["FCI", "AKC"],
-    fci: { groupNo: 8, groupName: "Retrievers - Flushing Dogs - Water Dogs" },
-    akc: { groupName: "Sporting" },
-  },
-  {
-    key: "german-shepherd-dog",
-    label: "German Shepherd Dog",
-    sources: ["FCI", "AKC"],
-    fci: { groupNo: 1, groupName: "Sheepdogs and Cattledogs (except Swiss Cattledogs)" },
-    akc: { groupName: "Herding" },
-    aliases: ["German Shepherd"],
-  },
-];
+// Compatibility helper used by the UI
+import type { BreedRecord } from "./breeds.generated";
+import { BREEDS as LIST } from "./breeds.generated";
 
 export function findBreedRecordByLabel(label: string): BreedRecord | undefined {
   const q = label.trim().toLowerCase();
-  return BREEDS.find(b =>
-    b.label.toLowerCase() === q ||
-    (b.aliases ?? []).some(a => a.toLowerCase() === q)
-  );
+  return LIST.find((b) => b.label.toLowerCase() === q);
 }
