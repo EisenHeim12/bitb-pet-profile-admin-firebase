@@ -2,17 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  addDoc,
-  collection,
-  onSnapshot,
-  orderBy,
-  query,
-  Timestamp,
-} from "firebase/firestore";
+import { addDoc, collection, onSnapshot, orderBy, query, Timestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { z } from "zod";
 import { cn } from "@/lib/utils";
+import { normalizeToE164 } from "@/lib/whatsapp";
 
 const ClientSchema = z.object({
   name: z.string().min(1),
@@ -32,16 +26,30 @@ type Client = {
   createdAt?: Timestamp;
 };
 
+function buildTelHref(raw?: string | null, defaultCountryCode = "91") {
+  const s = (raw ?? "").trim();
+  if (!s) return null;
+
+  const e164 = normalizeToE164(s, defaultCountryCode);
+  if (e164) return `tel:${e164}`;
+
+  const stripped = s.replace(/[^0-9+]/g, "");
+  if (!stripped || stripped === "+") return null;
+
+  return `tel:${stripped}`;
+}
+
+function buildMailtoHref(raw?: string | null) {
+  const s = (raw ?? "").trim();
+  if (!s) return null;
+  if (!s.includes("@")) return null;
+  return `mailto:${s}`;
+}
+
 export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [q, setQ] = useState("");
-  const [form, setForm] = useState({
-    name: "",
-    phone: "",
-    email: "",
-    address: "",
-    notes: "",
-  });
+  const [form, setForm] = useState({ name: "", phone: "", email: "", address: "", notes: "" });
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -82,19 +90,10 @@ export default function ClientsPage() {
 
     setSaving(true);
     try {
-      // 🔥 Firestore cannot store undefined. So we build payload conditionally.
-      const payload: Record<string, any> = {
-        name: parsed.data.name,
+      await addDoc(collection(db, "clients"), {
+        ...parsed.data,
         createdAt: Timestamp.now(),
-      };
-
-      if (parsed.data.phone) payload.phone = parsed.data.phone;
-      if (parsed.data.email) payload.email = parsed.data.email;
-      if (parsed.data.address) payload.address = parsed.data.address;
-      if (parsed.data.notes) payload.notes = parsed.data.notes;
-
-      await addDoc(collection(db, "clients"), payload);
-
+      });
       setForm({ name: "", phone: "", email: "", address: "", notes: "" });
     } catch (e: any) {
       setErr(e?.message ?? "Failed to create client");
@@ -131,23 +130,47 @@ export default function ClientsPage() {
             {filtered.length === 0 ? (
               <p className="text-sm text-neutral-600 py-6">No clients yet.</p>
             ) : (
-              filtered.map((c) => (
-                <Link
-                  key={c.id}
-                  href={`/clients/${c.id}`}
-                  className={cn("block py-3 hover:bg-neutral-50 px-2 rounded-lg")}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-medium truncate">{c.name}</p>
-                      <p className="text-xs text-neutral-600 mt-0.5 truncate">
-                        {c.phone ?? "—"} • {c.email ?? "—"}
-                      </p>
+              filtered.map((c) => {
+                const telHref = buildTelHref(c.phone);
+                const mailHref = buildMailtoHref(c.email);
+
+                return (
+                  <div
+                    key={c.id}
+                    className={cn("py-3 hover:bg-neutral-50 px-2 rounded-lg")}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">{c.name}</p>
+
+                        <p className="text-xs text-neutral-600 mt-0.5 truncate">
+                          {telHref ? (
+                            <a className="underline" href={telHref}>
+                              {c.phone}
+                            </a>
+                          ) : (
+                            <span>{c.phone ?? "—"}</span>
+                          )}
+
+                          <span>{" • "}</span>
+
+                          {mailHref ? (
+                            <a className="underline" href={mailHref}>
+                              {c.email}
+                            </a>
+                          ) : (
+                            <span>{c.email ?? "—"}</span>
+                          )}
+                        </p>
+                      </div>
+
+                      <Link className="text-xs underline shrink-0" href={`/clients/${c.id}`}>
+                        Open
+                      </Link>
                     </div>
-                    <span className="text-xs text-neutral-500">Open</span>
                   </div>
-                </Link>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -162,7 +185,6 @@ export default function ClientsPage() {
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
             </Field>
-
             <Field label="Phone">
               <input
                 className="w-full border rounded-lg p-2"
@@ -170,7 +192,6 @@ export default function ClientsPage() {
                 onChange={(e) => setForm({ ...form, phone: e.target.value })}
               />
             </Field>
-
             <Field label="Email">
               <input
                 className="w-full border rounded-lg p-2"
@@ -178,7 +199,6 @@ export default function ClientsPage() {
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
               />
             </Field>
-
             <Field label="Address">
               <input
                 className="w-full border rounded-lg p-2"
@@ -186,7 +206,6 @@ export default function ClientsPage() {
                 onChange={(e) => setForm({ ...form, address: e.target.value })}
               />
             </Field>
-
             <Field label="Notes">
               <textarea
                 className="w-full border rounded-lg p-2"

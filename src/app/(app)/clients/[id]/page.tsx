@@ -53,7 +53,6 @@ function isAllCapsLabel(s: string) {
   return letters.length > 0 && letters === letters.toUpperCase();
 }
 
-// For DOG labels coming from the list, this mainly fixes ALL CAPS if it ever appears.
 function normalizeBreedLabel(input: string) {
   const raw = input.trim();
   if (!raw) return "";
@@ -67,14 +66,11 @@ function normalizeBreedLabel(input: string) {
   return raw;
 }
 
-// For free-text (cats + custom dog breeds), Title Case but preserve common acronyms like (DSH)
 function normalizeFreeTextBreed(input: string) {
   let s = input.trim();
   if (!s) return "";
   s = s.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
-  // Preserve acronyms inside parentheses: (dsh) -> (DSH)
   s = s.replace(/\(([a-z0-9]{2,6})\)/g, (_, p1) => `(${String(p1).toUpperCase()})`);
-  // Preserve a few known acronyms even if not in parentheses
   s = s.replace(/\b(dsh|dmh|dlh|akc|fci)\b/gi, (m) => m.toUpperCase());
   return s;
 }
@@ -99,6 +95,26 @@ function formatFciText(fci?: { groupNo?: number; groupName?: string }) {
 function formatAkcText(akc?: { groupName?: string }) {
   const name = akc?.groupName ? toTitleCase(akc.groupName) : undefined;
   return name ? `AKC: ${name}` : null;
+}
+
+function buildTelHref(raw?: string | null, defaultCountryCode = "91") {
+  const s = (raw ?? "").trim();
+  if (!s) return null;
+
+  const e164 = normalizeToE164(s, defaultCountryCode);
+  if (e164) return `tel:${e164}`;
+
+  const stripped = s.replace(/[^0-9+]/g, "");
+  if (!stripped || stripped === "+") return null;
+
+  return `tel:${stripped}`;
+}
+
+function buildMailtoHref(raw?: string | null) {
+  const s = (raw ?? "").trim();
+  if (!s) return null;
+  if (!s.includes("@")) return null;
+  return `mailto:${s}`;
 }
 
 const PetSchema = z.object({
@@ -179,15 +195,18 @@ export default function ClientDetailPage() {
     return client.name ?? "Client";
   }, [client]);
 
-  // ✅ WhatsApp link (runtime-only; NO Firestore writes)
+  const telHref = useMemo(() => buildTelHref(client?.phone), [client?.phone]);
+  const mailHref = useMemo(() => buildMailtoHref(client?.email), [client?.email]);
+
   const whatsappHref = useMemo(() => {
-    const e164 = normalizeToE164(client?.phone ?? null, "91");
-    return buildWhatsAppLink(e164);
+    const e164 = normalizeToE164(client?.phone ?? "", "91");
+    if (!e164) return null;
+    // supports either (e164) or (e164, text) implementations
+    return (buildWhatsAppLink as any)(e164, "");
   }, [client?.phone]);
 
   const selectedBreedRecord = useMemo(() => {
     if (!form.breed) return undefined;
-    // Only meaningful for dogs
     if (form.species === "Cat") return undefined;
     return findBreedRecordByLabel(normalizeBreedLabel(form.breed));
   }, [form.breed, form.species]);
@@ -209,13 +228,11 @@ export default function ClientDetailPage() {
       return !catBreedSet.has(b.toLowerCase());
     }
 
-    // Dog / Other: warn if not in dog list AND not special options
     const norm = normalizeBreedLabel(b).toLowerCase();
     return !dogBreedSet.has(norm);
   }, [form.breed, form.species, dogBreedSet, catBreedSet]);
 
   function onBreedChange(next: string) {
-    // For cats we keep it readable but preserve acronyms
     const cleaned =
       form.species === "Cat" ? normalizeFreeTextBreed(next) : normalizeBreedLabel(next);
 
@@ -348,19 +365,33 @@ export default function ClientDetailPage() {
           </Link>
           <h1 className="text-2xl font-semibold mt-2">{header}</h1>
 
-          <p className="text-sm text-neutral-600 mt-1">
-            {client?.phone ?? "—"}
+          <p className="text-sm text-neutral-600 mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+            {telHref ? (
+              <a className="underline" href={telHref}>
+                {client?.phone}
+              </a>
+            ) : (
+              <span>{client?.phone ?? "—"}</span>
+            )}
+
+            <span>•</span>
+
+            {mailHref ? (
+              <a className="underline" href={mailHref}>
+                {client?.email}
+              </a>
+            ) : (
+              <span>{client?.email ?? "—"}</span>
+            )}
+
             {whatsappHref ? (
               <>
-                {" "}
-                •{" "}
+                <span>•</span>
                 <a className="underline" href={whatsappHref} target="_blank" rel="noreferrer">
                   WhatsApp
                 </a>
               </>
             ) : null}
-            {" • "}
-            {client?.email ?? "—"}
           </p>
         </div>
 
@@ -384,8 +415,7 @@ export default function ClientDetailPage() {
                 >
                   <p className="font-medium">{p.name}</p>
                   <p className="text-xs text-neutral-600 mt-0.5">
-                    {p.species ?? "Dog"} • {p.breed ?? "—"} • Microchip{" "}
-                    {p.microchipNo ?? "—"}
+                    {p.species ?? "Dog"} • {p.breed ?? "—"} • Microchip {p.microchipNo ?? "—"}
                   </p>
                 </Link>
               ))
@@ -415,7 +445,6 @@ export default function ClientDetailPage() {
                     setForm((prev) => ({
                       ...prev,
                       species: next,
-                      // clear breed if switching species to avoid mismatch confusion
                       breed: "",
                       breedType: "Purebred",
                       breedComponents: [],
@@ -466,9 +495,7 @@ export default function ClientDetailPage() {
                       ))}
                     </datalist>
 
-                    {groupLine ? (
-                      <p className="text-xs text-neutral-600 mt-1">{groupLine}</p>
-                    ) : null}
+                    {groupLine ? <p className="text-xs text-neutral-600 mt-1">{groupLine}</p> : null}
                   </>
                 )}
 
@@ -519,11 +546,7 @@ export default function ClientDetailPage() {
                   ))}
                 </div>
 
-                <button
-                  type="button"
-                  className="mt-2 text-sm underline"
-                  onClick={addComponentRow}
-                >
+                <button type="button" className="mt-2 text-sm underline" onClick={addComponentRow}>
                   + Add another breed
                 </button>
               </div>

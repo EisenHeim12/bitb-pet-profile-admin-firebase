@@ -1,12 +1,12 @@
 "use client";
 
-import { normalizeToE164, buildWhatsAppLink } from "@/lib/whatsapp";
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { doc, getDoc, updateDoc, Timestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { BREEDS, findBreedRecordByLabel } from "@/lib/breeds";
+import ClientWhatsAppInline from "@/components/ClientWhatsAppInline";
 
 type BreedType = "Purebred" | "Mix-breed" | "Cross-breed";
 
@@ -117,9 +117,7 @@ function calcAgeLabel(dobStr: string) {
     (now.getFullYear() - d.getFullYear()) * 12 +
     (now.getMonth() - d.getMonth());
 
-  // If current day is before birth day, subtract one month
   if (now.getDate() < d.getDate()) months -= 1;
-
   if (months < 0) return "";
 
   const years = Math.floor(months / 12);
@@ -262,7 +260,8 @@ export default function PetDetailPage() {
           species,
           breed: breedLabel,
           breedType: inferredType,
-          breedComponents: inferredType === "Purebred" ? ["", ""] : (compsNorm.length ? compsNorm : ["", ""]),
+          breedComponents:
+            inferredType === "Purebred" ? ["", ""] : compsNorm.length ? compsNorm : ["", ""],
           sex: data?.sex ?? "",
           dob: tsToDateInput(data?.dob),
           microchipNo: data?.microchipNo ?? "",
@@ -303,27 +302,22 @@ export default function PetDetailPage() {
   }, [form.breed]);
 
   const showCustomCatBreedInput = useMemo(() => {
-    // Show the custom input only if dropdown is blank/custom
     return form.species === "Cat" && catSelectValue === "";
   }, [form.species, catSelectValue]);
 
   function onBreedChange(next: string) {
-    const cleaned =
-      form.species === "Cat" ? normalizeFreeTextBreed(next) : normalizeBreedLabel(next);
-
+    const cleaned = form.species === "Cat" ? normalizeFreeTextBreed(next) : normalizeBreedLabel(next);
     const nextType = getBreedTypeFromLabel(cleaned);
 
     setForm((prev) => ({
       ...prev,
       breed: cleaned,
-      // For cats, we still let you choose breedType manually; don't auto-force here.
       breedType: prev.breedType || nextType,
     }));
   }
 
   function updateComponent(idx: number, value: string) {
-    const cleaned =
-      form.species === "Cat" ? normalizeFreeTextBreed(value) : normalizeBreedLabel(value);
+    const cleaned = form.species === "Cat" ? normalizeFreeTextBreed(value) : normalizeBreedLabel(value);
 
     setForm((prev) => {
       const next = [...prev.breedComponents];
@@ -410,7 +404,7 @@ export default function PetDetailPage() {
         species,
         breedType,
         breed: normalizedBreed,
-        breedComponents: breedType === "Purebred" ? ["", ""] : (comps.length ? comps : ["", ""]),
+        breedComponents: breedType === "Purebred" ? ["", ""] : comps.length ? comps : ["", ""],
       };
 
       setForm(postSaveForm);
@@ -442,7 +436,7 @@ export default function PetDetailPage() {
     );
   }
 
-  const buttonText = saving ? "Saving..." : (!isDirty && baseline ? "Saved" : "Save changes");
+  const buttonText = saving ? "Saving..." : !isDirty && baseline ? "Saved" : "Save changes";
   const ageLabel = calcAgeLabel(form.dob);
 
   const componentOptions = form.species === "Cat" ? catComponentOptions : dogComponentOptions;
@@ -460,9 +454,7 @@ export default function PetDetailPage() {
             {pet?.clientId ? (
               <>
                 {" "}•{" "}
-                <Link className="underline" href={`/clients/${pet.clientId}`}>
-                  Client
-                </Link>
+                <ClientWhatsAppInline clientId={String(pet.clientId)} />
               </>
             ) : null}
           </p>
@@ -516,8 +508,10 @@ export default function PetDetailPage() {
                   onChange={(e) => {
                     const v = e.target.value;
                     if (!v) {
-                      // user picked custom/blank; keep breed as-is (or empty)
-                      setForm((prev) => ({ ...prev, breed: prev.breed && !CAT_BREEDS.includes(prev.breed) ? prev.breed : "" }));
+                      setForm((prev) => ({
+                        ...prev,
+                        breed: prev.breed && !CAT_BREEDS.includes(prev.breed) ? prev.breed : "",
+                      }));
                       return;
                     }
                     setForm((prev) => ({ ...prev, breed: v }));
@@ -535,7 +529,9 @@ export default function PetDetailPage() {
                   <input
                     className="w-full border rounded-lg p-2 mt-2"
                     value={form.breed}
-                    onChange={(e) => setForm((prev) => ({ ...prev, breed: normalizeFreeTextBreed(e.target.value) }))}
+                    onChange={(e) =>
+                      setForm((prev) => ({ ...prev, breed: normalizeFreeTextBreed(e.target.value) }))
+                    }
                     placeholder="Type cat breed/type (e.g., Domestic Short Hair (DSH))"
                   />
                 ) : null}
@@ -569,7 +565,12 @@ export default function PetDetailPage() {
                 setForm((prev) => ({
                   ...prev,
                   breedType: nextType,
-                  breedComponents: nextType === "Purebred" ? ["", ""] : (prev.breedComponents.length ? prev.breedComponents : ["", ""]),
+                  breedComponents:
+                    nextType === "Purebred"
+                      ? ["", ""]
+                      : prev.breedComponents.length
+                        ? prev.breedComponents
+                        : ["", ""],
                 }));
               }}
             >
@@ -580,7 +581,7 @@ export default function PetDetailPage() {
           </Field>
         </div>
 
-        {(form.breedType === "Mix-breed" || form.breedType === "Cross-breed") ? (
+        {form.breedType === "Mix-breed" || form.breedType === "Cross-breed" ? (
           <div className="mt-4 border rounded-xl p-3 bg-neutral-50 space-y-2">
             <p className="text-xs text-neutral-600">
               {form.breedType} components (select at least 2)
@@ -641,9 +642,7 @@ export default function PetDetailPage() {
                 value={form.dob}
                 onChange={(e) => setForm({ ...form, dob: e.target.value })}
               />
-              {ageLabel ? (
-                <p className="text-xs text-neutral-600 mt-1">{ageLabel}</p>
-              ) : null}
+              {ageLabel ? <p className="text-xs text-neutral-600 mt-1">{ageLabel}</p> : null}
             </>
           </Field>
 
