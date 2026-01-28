@@ -1,5 +1,6 @@
 "use client";
 
+import { normalizeToE164, buildWhatsAppLink } from "@/lib/whatsapp";
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -178,6 +179,12 @@ export default function ClientDetailPage() {
     return client.name ?? "Client";
   }, [client]);
 
+  // ✅ WhatsApp link (runtime-only; NO Firestore writes)
+  const whatsappHref = useMemo(() => {
+    const e164 = normalizeToE164(client?.phone ?? null, "91");
+    return buildWhatsAppLink(e164);
+  }, [client?.phone]);
+
   const selectedBreedRecord = useMemo(() => {
     if (!form.breed) return undefined;
     // Only meaningful for dogs
@@ -340,8 +347,20 @@ export default function ClientDetailPage() {
             ← Back
           </Link>
           <h1 className="text-2xl font-semibold mt-2">{header}</h1>
+
           <p className="text-sm text-neutral-600 mt-1">
-            {client?.phone ?? "—"} • {client?.email ?? "—"}
+            {client?.phone ?? "—"}
+            {whatsappHref ? (
+              <>
+                {" "}
+                •{" "}
+                <a className="underline" href={whatsappHref} target="_blank" rel="noreferrer">
+                  WhatsApp
+                </a>
+              </>
+            ) : null}
+            {" • "}
+            {client?.email ?? "—"}
           </p>
         </div>
 
@@ -412,27 +431,26 @@ export default function ClientDetailPage() {
               <Field label="Breed">
                 {form.species === "Cat" ? (
                   <>
-  <select
-    className="w-full border rounded-lg p-2"
-    value={CAT_BREEDS.includes(form.breed) ? form.breed : ""}
-    onChange={(e) => onBreedChange(e.target.value)}
-  >
-    <option value="">— Select cat breed —</option>
-    {CAT_BREEDS.map((b) => (
-      <option key={b} value={b}>
-        {b}
-      </option>
-    ))}
-  </select>
+                    <select
+                      className="w-full border rounded-lg p-2"
+                      value={CAT_BREEDS.includes(form.breed) ? form.breed : ""}
+                      onChange={(e) => onBreedChange(e.target.value)}
+                    >
+                      <option value="">— Select cat breed —</option>
+                      {CAT_BREEDS.map((b) => (
+                        <option key={b} value={b}>
+                          {b}
+                        </option>
+                      ))}
+                    </select>
 
-  <input
-    className="w-full border rounded-lg p-2 mt-2"
-    value={form.breed}
-    onChange={(e) => onBreedChange(e.target.value)}
-    placeholder="Or type a breed/type (e.g., Domestic Short Hair (DSH))"
-  />
-</>
-
+                    <input
+                      className="w-full border rounded-lg p-2 mt-2"
+                      value={form.breed}
+                      onChange={(e) => onBreedChange(e.target.value)}
+                      placeholder="Or type a breed/type (e.g., Domestic Short Hair (DSH))"
+                    />
+                  </>
                 ) : (
                   <>
                     <input
@@ -462,7 +480,7 @@ export default function ClientDetailPage() {
               </Field>
             </div>
 
-            {(form.breedType === "Mix-breed" || form.breedType === "Cross-breed") ? (
+            {form.breedType === "Mix-breed" || form.breedType === "Cross-breed" ? (
               <div className="border rounded-xl p-3">
                 <p className="text-xs text-neutral-600">
                   {form.breedType} components (select at least 2)

@@ -1,5 +1,6 @@
 "use client";
 
+import { normalizeToE164, buildWhatsAppLink } from "@/lib/whatsapp";
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";

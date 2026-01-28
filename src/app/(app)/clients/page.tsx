@@ -2,7 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { addDoc, collection, onSnapshot, orderBy, query, Timestamp } from "firebase/firestore";
+import {
+  addDoc,
+  collection,
+  onSnapshot,
+  orderBy,
+  query,
+  Timestamp,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { z } from "zod";
 import { cn } from "@/lib/utils";
@@ -28,30 +35,38 @@ type Client = {
 export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [q, setQ] = useState("");
-  const [form, setForm] = useState({ name: "", phone: "", email: "", address: "", notes: "" });
+  const [form, setForm] = useState({
+    name: "",
+    phone: "",
+    email: "",
+    address: "",
+    notes: "",
+  });
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     const qy = query(collection(db, "clients"), orderBy("createdAt", "desc"));
     return onSnapshot(qy, (snap) => {
-      setClients(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+      setClients(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
     });
   }, []);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return clients;
-    return clients.filter(c =>
-      (c.name ?? "").toLowerCase().includes(needle) ||
-      (c.phone ?? "").toLowerCase().includes(needle) ||
-      (c.email ?? "").toLowerCase().includes(needle)
+    return clients.filter(
+      (c) =>
+        (c.name ?? "").toLowerCase().includes(needle) ||
+        (c.phone ?? "").toLowerCase().includes(needle) ||
+        (c.email ?? "").toLowerCase().includes(needle)
     );
   }, [clients, q]);
 
   async function createClient(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
+
     const parsed = ClientSchema.safeParse({
       name: form.name.trim(),
       phone: form.phone.trim() || undefined,
@@ -59,16 +74,27 @@ export default function ClientsPage() {
       address: form.address.trim() || undefined,
       notes: form.notes.trim() || undefined,
     });
+
     if (!parsed.success) {
       setErr("Name is required.");
       return;
     }
+
     setSaving(true);
     try {
-      await addDoc(collection(db, "clients"), {
-        ...parsed.data,
+      // 🔥 Firestore cannot store undefined. So we build payload conditionally.
+      const payload: Record<string, any> = {
+        name: parsed.data.name,
         createdAt: Timestamp.now(),
-      });
+      };
+
+      if (parsed.data.phone) payload.phone = parsed.data.phone;
+      if (parsed.data.email) payload.email = parsed.data.email;
+      if (parsed.data.address) payload.address = parsed.data.address;
+      if (parsed.data.notes) payload.notes = parsed.data.notes;
+
+      await addDoc(collection(db, "clients"), payload);
+
       setForm({ name: "", phone: "", email: "", address: "", notes: "" });
     } catch (e: any) {
       setErr(e?.message ?? "Failed to create client");
@@ -84,7 +110,9 @@ export default function ClientsPage() {
           <h1 className="text-2xl font-semibold">Clients</h1>
           <p className="text-sm text-neutral-600 mt-1">Add and manage pet parents.</p>
         </div>
-        <Link className="text-sm underline" href="/dashboard">Dashboard</Link>
+        <Link className="text-sm underline" href="/dashboard">
+          Dashboard
+        </Link>
       </div>
 
       <div className="grid lg:grid-cols-[1fr_420px] gap-4">
@@ -102,23 +130,25 @@ export default function ClientsPage() {
           <div className="mt-3 divide-y">
             {filtered.length === 0 ? (
               <p className="text-sm text-neutral-600 py-6">No clients yet.</p>
-            ) : filtered.map(c => (
-              <Link
-                key={c.id}
-                href={`/clients/${c.id}`}
-                className={cn("block py-3 hover:bg-neutral-50 px-2 rounded-lg")}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="font-medium truncate">{c.name}</p>
-                    <p className="text-xs text-neutral-600 mt-0.5 truncate">
-                      {c.phone ?? "—"} • {c.email ?? "—"}
-                    </p>
+            ) : (
+              filtered.map((c) => (
+                <Link
+                  key={c.id}
+                  href={`/clients/${c.id}`}
+                  className={cn("block py-3 hover:bg-neutral-50 px-2 rounded-lg")}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">{c.name}</p>
+                      <p className="text-xs text-neutral-600 mt-0.5 truncate">
+                        {c.phone ?? "—"} • {c.email ?? "—"}
+                      </p>
+                    </div>
+                    <span className="text-xs text-neutral-500">Open</span>
                   </div>
-                  <span className="text-xs text-neutral-500">Open</span>
-                </div>
-              </Link>
-            ))}
+                </Link>
+              ))
+            )}
           </div>
         </div>
 
@@ -126,24 +156,52 @@ export default function ClientsPage() {
           <h2 className="font-semibold">Add client</h2>
           <form onSubmit={createClient} className="mt-3 space-y-2">
             <Field label="Name *">
-              <input className="w-full border rounded-lg p-2" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              <input
+                className="w-full border rounded-lg p-2"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
             </Field>
+
             <Field label="Phone">
-              <input className="w-full border rounded-lg p-2" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+              <input
+                className="w-full border rounded-lg p-2"
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+              />
             </Field>
+
             <Field label="Email">
-              <input className="w-full border rounded-lg p-2" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+              <input
+                className="w-full border rounded-lg p-2"
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+              />
             </Field>
+
             <Field label="Address">
-              <input className="w-full border rounded-lg p-2" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+              <input
+                className="w-full border rounded-lg p-2"
+                value={form.address}
+                onChange={(e) => setForm({ ...form, address: e.target.value })}
+              />
             </Field>
+
             <Field label="Notes">
-              <textarea className="w-full border rounded-lg p-2" rows={3} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+              <textarea
+                className="w-full border rounded-lg p-2"
+                rows={3}
+                value={form.notes}
+                onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              />
             </Field>
 
             {err ? <p className="text-sm text-red-600">{err}</p> : null}
 
-            <button className="w-full rounded-lg bg-black text-white py-2 disabled:opacity-60" disabled={saving}>
+            <button
+              className="w-full rounded-lg bg-black text-white py-2 disabled:opacity-60"
+              disabled={saving}
+            >
               {saving ? "Creating..." : "Create client"}
             </button>
           </form>
