@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { addDoc, collection, onSnapshot, orderBy, query, Timestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { z } from "zod";
@@ -26,6 +27,10 @@ type Client = {
   createdAt?: Timestamp;
 };
 
+function stripUndefined<T extends Record<string, any>>(obj: T) {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
+}
+
 function buildTelHref(raw?: string | null, defaultCountryCode = "91") {
   const s = (raw ?? "").trim();
   if (!s) return null;
@@ -47,6 +52,8 @@ function buildMailtoHref(raw?: string | null) {
 }
 
 export default function ClientsPage() {
+  const router = useRouter();
+
   const [clients, setClients] = useState<Client[]>([]);
   const [q, setQ] = useState("");
   const [form, setForm] = useState({ name: "", phone: "", email: "", address: "", notes: "" });
@@ -90,10 +97,13 @@ export default function ClientsPage() {
 
     setSaving(true);
     try {
-      await addDoc(collection(db, "clients"), {
+      const payload = stripUndefined({
         ...parsed.data,
         createdAt: Timestamp.now(),
       });
+
+      await addDoc(collection(db, "clients"), payload);
+
       setForm({ name: "", phone: "", email: "", address: "", notes: "" });
     } catch (e: any) {
       setErr(e?.message ?? "Failed to create client");
@@ -134,10 +144,24 @@ export default function ClientsPage() {
                 const telHref = buildTelHref(c.phone);
                 const mailHref = buildMailtoHref(c.email);
 
+                const openClient = () => router.push(`/clients/${c.id}`);
+
                 return (
                   <div
                     key={c.id}
-                    className={cn("py-3 hover:bg-neutral-50 px-2 rounded-lg")}
+                    className={cn(
+                      "py-3 px-2 rounded-lg hover:bg-neutral-50 cursor-pointer",
+                      "focus:outline-none focus:ring-2 focus:ring-black/20"
+                    )}
+                    role="link"
+                    tabIndex={0}
+                    onClick={openClient}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openClient();
+                      }
+                    }}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -145,8 +169,8 @@ export default function ClientsPage() {
 
                         <p className="text-xs text-neutral-600 mt-0.5 truncate">
                           {telHref ? (
-                            <a className="underline" href={telHref}>
-                              {c.phone}
+                            <a className="underline" href={telHref} onClick={(e) => e.stopPropagation()}>
+                              {c.phone ?? "—"}
                             </a>
                           ) : (
                             <span>{c.phone ?? "—"}</span>
@@ -155,8 +179,8 @@ export default function ClientsPage() {
                           <span>{" • "}</span>
 
                           {mailHref ? (
-                            <a className="underline" href={mailHref}>
-                              {c.email}
+                            <a className="underline" href={mailHref} onClick={(e) => e.stopPropagation()}>
+                              {c.email ?? "—"}
                             </a>
                           ) : (
                             <span>{c.email ?? "—"}</span>
@@ -164,9 +188,7 @@ export default function ClientsPage() {
                         </p>
                       </div>
 
-                      <Link className="text-xs underline shrink-0" href={`/clients/${c.id}`}>
-                        Open
-                      </Link>
+                      <span className="text-xs text-neutral-500">Open</span>
                     </div>
                   </div>
                 );
@@ -217,10 +239,7 @@ export default function ClientsPage() {
 
             {err ? <p className="text-sm text-red-600">{err}</p> : null}
 
-            <button
-              className="w-full rounded-lg bg-black text-white py-2 disabled:opacity-60"
-              disabled={saving}
-            >
+            <button className="w-full rounded-lg bg-black text-white py-2 disabled:opacity-60" disabled={saving}>
               {saving ? "Creating..." : "Create client"}
             </button>
           </form>
