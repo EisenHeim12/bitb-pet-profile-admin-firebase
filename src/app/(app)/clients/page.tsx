@@ -1,13 +1,25 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { normalizeToE164 } from "@/lib/whatsapp";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { addDoc, collection, onSnapshot, orderBy, query, Timestamp } from "firebase/firestore";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  addDoc,
+  collection,
+  onSnapshot,
+  orderBy,
+  query,
+  Timestamp,
+  deleteDoc,
+  doc,
+  getDocs,
+  where,
+  limit,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { z } from "zod";
 import { cn } from "@/lib/utils";
-import { normalizeToE164 } from "@/lib/whatsapp";
 
 const ClientSchema = z.object({
   name: z.string().min(1),
@@ -20,7 +32,8 @@ const ClientSchema = z.object({
 type Client = {
   id: string;
   name: string;
-  phone?: string;
+  phone?: string; // raw user input
+  phoneE164?: string; // derived (Option A)
   email?: string;
   address?: string;
   notes?: string;
@@ -53,12 +66,18 @@ function buildMailtoHref(raw?: string | null) {
 
 export default function ClientsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const addCardRef = useRef<HTMLDivElement | null>(null);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
 
   const [clients, setClients] = useState<Client[]>([]);
   const [q, setQ] = useState("");
   const [form, setForm] = useState({ name: "", phone: "", email: "", address: "", notes: "" });
   const [err, setErr] = useState<string | null>(null);
+  const [listErr, setListErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     const qy = query(collection(db, "clients"), orderBy("createdAt", "desc"));
@@ -67,13 +86,30 @@ export default function ClientsPage() {
     });
   }, []);
 
+  // ✅ If opened via /clients?new=1, jump to "Add client" + focus name
+  useEffect(() => {
+    const isNew = searchParams.get("new") === "1";
+    if (!isNew) return;
+
+    // Wait a tick so refs exist
+    requestAnimationFrame(() => {
+      addCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      // Small delay ensures focus happens after scroll starts
+      setTimeout(() => {
+        nameInputRef.current?.focus();
+      }, 150);
+    });
+  }, [searchParams]);
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return clients;
+
     return clients.filter(
       (c) =>
         (c.name ?? "").toLowerCase().includes(needle) ||
         (c.phone ?? "").toLowerCase().includes(needle) ||
+        (c.phoneE164 ?? "").toLowerCase().includes(needle) ||
         (c.email ?? "").toLowerCase().includes(needle)
     );
   }, [clients, q]);
@@ -97,8 +133,15 @@ export default function ClientsPage() {
 
     setSaving(true);
     try {
+      const derivedE164 =
+        parsed.data.phone && parsed.data.phone.trim()
+          ? normalizeToE164(parsed.data.phone.trim(), "91")
+          : null;
+
       const payload = stripUndefined({
         ...parsed.data,
+        // Option A: store derived phoneE164 but NEVER overwrite raw phone
+        phoneE164: derivedE164 || undefined,
         createdAt: Timestamp.now(),
       });
 
@@ -112,6 +155,33 @@ export default function ClientsPage() {
     }
   }
 
+  async function handleDeleteClient(c: Client) {
+    setListErr(null);
+
+    const ok1 = window.confirm(`Delete this client${c?.name ? `: ${c.name}` : ""}? This cannot be undone.`);
+    if (!ok1) return;
+
+    const typed = window.prompt("Type DELETE to confirm deletion:");
+    if (typed !== "DELETE") return;
+
+    setDeletingId(c.id);
+    try {
+      // Safety: do NOT allow deleting a client who still has pets
+      const petSnap = await getDocs(query(collection(db, "pets"), where("clientId", "==", c.id), limit(1)));
+      if (!petSnap.empty) {
+        window.alert("Cannot delete client: they still have pets. Delete/transfer pets first.");
+        return;
+      }
+
+      await deleteDoc(doc(db, "clients", c.id));
+      // Snapshot will auto-refresh
+    } catch (e: any) {
+      setListErr(e?.message ?? "Failed to delete client.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   return (
     <main className="p-6 space-y-6">
       <div className="flex items-start justify-between gap-4">
@@ -119,7 +189,8 @@ export default function ClientsPage() {
           <h1 className="text-2xl font-semibold">Clients</h1>
           <p className="text-sm text-neutral-600 mt-1">Add and manage pet parents.</p>
         </div>
-        <Link className="text-sm underline" href="/dashboard">
+
+        <Link className="text-sm rounded-lg border px-3 py-2 hover:bg-neutral-50" href="/dashboard">
           Dashboard
         </Link>
       </div>
@@ -136,13 +207,18 @@ export default function ClientsPage() {
             />
           </div>
 
+          {listErr ? <p className="text-sm text-red-600 mt-3">{listErr}</p> : null}
+
           <div className="mt-3 divide-y">
             {filtered.length === 0 ? (
               <p className="text-sm text-neutral-600 py-6">No clients yet.</p>
             ) : (
               filtered.map((c) => {
-                const telHref = buildTelHref(c.phone);
+                const telHref = c.phoneE164 ? `tel:${c.phoneE164}` : buildTelHref(c.phone);
                 const mailHref = buildMailtoHref(c.email);
+
+                const displayPhone = (c.phone ?? c.phoneE164 ?? "").trim() || "—";
+                const displayEmail = (c.email ?? "").trim() || "—";
 
                 const openClient = () => router.push(`/clients/${c.id}`);
 
@@ -170,25 +246,62 @@ export default function ClientsPage() {
                         <p className="text-xs text-neutral-600 mt-0.5 truncate">
                           {telHref ? (
                             <a className="underline" href={telHref} onClick={(e) => e.stopPropagation()}>
-                              {c.phone ?? "—"}
+                              {displayPhone}
                             </a>
                           ) : (
-                            <span>{c.phone ?? "—"}</span>
+                            <span>{displayPhone}</span>
                           )}
 
                           <span>{" • "}</span>
 
                           {mailHref ? (
                             <a className="underline" href={mailHref} onClick={(e) => e.stopPropagation()}>
-                              {c.email ?? "—"}
+                              {displayEmail}
                             </a>
                           ) : (
-                            <span>{c.email ?? "—"}</span>
+                            <span>{displayEmail}</span>
                           )}
                         </p>
                       </div>
 
-                      <span className="text-xs text-neutral-500">Open</span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="relative group">
+                          <button
+                            type="button"
+                            className="rounded-lg px-2 py-1 text-xs border hover:bg-white transition"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openClient();
+                            }}
+                            aria-label="Open client"
+                            title="Open"
+                          >
+                            ✏️
+                          </button>
+                          <span className="pointer-events-none absolute -top-9 right-0 opacity-0 group-hover:opacity-100 transition text-[11px] bg-black text-white px-2 py-1 rounded-md shadow">
+                            Open
+                          </span>
+                        </div>
+
+                        <div className="relative group">
+                          <button
+                            type="button"
+                            className="rounded-lg px-2 py-1 text-xs border bg-white transition transform hover:scale-105 hover:border-red-300 hover:bg-red-50 disabled:opacity-60"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteClient(c);
+                            }}
+                            aria-label="Delete client"
+                            disabled={deletingId === c.id}
+                            title="Delete"
+                          >
+                            🗑️
+                          </button>
+                          <span className="pointer-events-none absolute -top-9 right-0 opacity-0 group-hover:opacity-100 transition text-[11px] bg-red-600 text-white px-2 py-1 rounded-md shadow">
+                            Delete
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 );
@@ -197,16 +310,18 @@ export default function ClientsPage() {
           </div>
         </div>
 
-        <div className="border rounded-2xl p-4">
+        <div ref={addCardRef} className="border rounded-2xl p-4">
           <h2 className="font-semibold">Add client</h2>
           <form onSubmit={createClient} className="mt-3 space-y-2">
             <Field label="Name *">
               <input
+                ref={nameInputRef}
                 className="w-full border rounded-lg p-2"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
             </Field>
+
             <Field label="Phone">
               <input
                 className="w-full border rounded-lg p-2"
@@ -214,6 +329,7 @@ export default function ClientsPage() {
                 onChange={(e) => setForm({ ...form, phone: e.target.value })}
               />
             </Field>
+
             <Field label="Email">
               <input
                 className="w-full border rounded-lg p-2"
@@ -221,6 +337,7 @@ export default function ClientsPage() {
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
               />
             </Field>
+
             <Field label="Address">
               <input
                 className="w-full border rounded-lg p-2"
@@ -228,6 +345,7 @@ export default function ClientsPage() {
                 onChange={(e) => setForm({ ...form, address: e.target.value })}
               />
             </Field>
+
             <Field label="Notes">
               <textarea
                 className="w-full border rounded-lg p-2"

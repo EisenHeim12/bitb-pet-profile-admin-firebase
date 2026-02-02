@@ -2,8 +2,8 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { doc, getDoc, updateDoc, Timestamp } from "firebase/firestore";
+import { useParams, useRouter } from "next/navigation";
+import { doc, getDoc, updateDoc, deleteDoc, Timestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { BREEDS, findBreedRecordByLabel } from "@/lib/breeds";
 import ClientWhatsAppInline from "@/components/ClientWhatsAppInline";
@@ -113,9 +113,7 @@ function calcAgeLabel(dobStr: string) {
   if (isNaN(d.getTime())) return "";
 
   const now = new Date();
-  let months =
-    (now.getFullYear() - d.getFullYear()) * 12 +
-    (now.getMonth() - d.getMonth());
+  let months = (now.getFullYear() - d.getFullYear()) * 12 + (now.getMonth() - d.getMonth());
 
   if (now.getDate() < d.getDate()) months -= 1;
   if (months < 0) return "";
@@ -147,10 +145,7 @@ function comparableForm(form: {
   const species = form.species.trim() || "Dog";
   const breedType = form.breedType;
 
-  const breed =
-    species === "Cat"
-      ? normalizeFreeTextBreed(form.breed)
-      : normalizeBreedLabel(form.breed);
+  const breed = species === "Cat" ? normalizeFreeTextBreed(form.breed) : normalizeBreedLabel(form.breed);
 
   const comps =
     breedType === "Mix-breed" || breedType === "Cross-breed"
@@ -175,11 +170,13 @@ function comparableForm(form: {
 }
 
 export default function PetDetailPage() {
+  const router = useRouter();
   const params = useParams<{ id: string }>();
   const petId = params.id;
 
   const [pet, setPet] = useState<any | null | undefined>(undefined);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -241,13 +238,10 @@ export default function PetDetailPage() {
 
         const species = (data?.species ?? "Dog") as string;
         const breedLabel =
-          species === "Cat"
-            ? normalizeFreeTextBreed(data?.breed ?? "")
-            : normalizeBreedLabel(data?.breed ?? "");
+          species === "Cat" ? normalizeFreeTextBreed(data?.breed ?? "") : normalizeBreedLabel(data?.breed ?? "");
 
         const inferredType: BreedType =
-          (data?.breedType as BreedType) ??
-          (breedLabel ? getBreedTypeFromLabel(breedLabel) : "Purebred");
+          (data?.breedType as BreedType) ?? (breedLabel ? getBreedTypeFromLabel(breedLabel) : "Purebred");
 
         const compsRaw = Array.isArray(data?.breedComponents) ? data.breedComponents : [];
         const compsNorm =
@@ -260,8 +254,7 @@ export default function PetDetailPage() {
           species,
           breed: breedLabel,
           breedType: inferredType,
-          breedComponents:
-            inferredType === "Purebred" ? ["", ""] : compsNorm.length ? compsNorm : ["", ""],
+          breedComponents: inferredType === "Purebred" ? ["", ""] : compsNorm.length ? compsNorm : ["", ""],
           sex: data?.sex ?? "",
           dob: tsToDateInput(data?.dob),
           microchipNo: data?.microchipNo ?? "",
@@ -353,10 +346,7 @@ export default function PetDetailPage() {
 
     const species = (form.species.trim() || "Dog") as string;
 
-    const normalizedBreed =
-      species === "Cat"
-        ? normalizeFreeTextBreed(form.breed)
-        : normalizeBreedLabel(form.breed);
+    const normalizedBreed = species === "Cat" ? normalizeFreeTextBreed(form.breed) : normalizeBreedLabel(form.breed);
 
     const breedType = form.breedType;
 
@@ -417,6 +407,24 @@ export default function PetDetailPage() {
     }
   }
 
+  async function deletePet() {
+    setErr(null);
+    setMsg(null);
+
+    const ok = window.confirm("Delete this pet? This cannot be undone.");
+    if (!ok) return;
+
+    setDeleting(true);
+    try {
+      await deleteDoc(doc(db, "pets", petId));
+      router.push("/pets");
+      router.refresh();
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to delete pet.");
+      setDeleting(false);
+    }
+  }
+
   if (pet === undefined) {
     return (
       <main className="p-6">
@@ -460,13 +468,24 @@ export default function PetDetailPage() {
           </p>
         </div>
 
-        <button
-          onClick={save}
-          className="rounded-lg bg-black text-white px-4 py-2 disabled:opacity-60"
-          disabled={saving || (!!baseline && !isDirty)}
-        >
-          {buttonText}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={deletePet}
+            className="rounded-lg border px-4 py-2 disabled:opacity-60"
+            disabled={saving || deleting}
+            title="Delete this pet"
+          >
+            {deleting ? "Deleting..." : "Delete"}
+          </button>
+
+          <button
+            onClick={save}
+            className="rounded-lg bg-black text-white px-4 py-2 disabled:opacity-60"
+            disabled={saving || deleting || (!!baseline && !isDirty)}
+          >
+            {buttonText}
+          </button>
+        </div>
       </div>
 
       <div className="border rounded-2xl p-4 max-w-3xl">
@@ -529,9 +548,7 @@ export default function PetDetailPage() {
                   <input
                     className="w-full border rounded-lg p-2 mt-2"
                     value={form.breed}
-                    onChange={(e) =>
-                      setForm((prev) => ({ ...prev, breed: normalizeFreeTextBreed(e.target.value) }))
-                    }
+                    onChange={(e) => setForm((prev) => ({ ...prev, breed: normalizeFreeTextBreed(e.target.value) }))}
                     placeholder="Type cat breed/type (e.g., Domestic Short Hair (DSH))"
                   />
                 ) : null}
@@ -565,12 +582,7 @@ export default function PetDetailPage() {
                 setForm((prev) => ({
                   ...prev,
                   breedType: nextType,
-                  breedComponents:
-                    nextType === "Purebred"
-                      ? ["", ""]
-                      : prev.breedComponents.length
-                        ? prev.breedComponents
-                        : ["", ""],
+                  breedComponents: nextType === "Purebred" ? ["", ""] : prev.breedComponents.length ? prev.breedComponents : ["", ""],
                 }));
               }}
             >
@@ -583,9 +595,7 @@ export default function PetDetailPage() {
 
         {form.breedType === "Mix-breed" || form.breedType === "Cross-breed" ? (
           <div className="mt-4 border rounded-xl p-3 bg-neutral-50 space-y-2">
-            <p className="text-xs text-neutral-600">
-              {form.breedType} components (select at least 2)
-            </p>
+            <p className="text-xs text-neutral-600">{form.breedType} components (select at least 2)</p>
 
             {form.breedComponents.map((val, idx) => (
               <div key={idx} className="flex gap-2">
@@ -602,12 +612,7 @@ export default function PetDetailPage() {
                   ))}
                 </select>
 
-                <button
-                  type="button"
-                  className="border rounded-lg px-3 text-sm"
-                  onClick={() => removeComponentRow(idx)}
-                  title="Remove"
-                >
+                <button type="button" className="border rounded-lg px-3 text-sm" onClick={() => removeComponentRow(idx)} title="Remove">
                   ✕
                 </button>
               </div>
@@ -623,11 +628,7 @@ export default function PetDetailPage() {
 
         <div className="grid md:grid-cols-2 gap-3 mt-4">
           <Field label="Gender">
-            <select
-              className="w-full border rounded-lg p-2"
-              value={form.sex}
-              onChange={(e) => setForm({ ...form, sex: e.target.value })}
-            >
+            <select className="w-full border rounded-lg p-2" value={form.sex} onChange={(e) => setForm({ ...form, sex: e.target.value })}>
               <option value="">—</option>
               <option value="Male">Male</option>
               <option value="Female">Female</option>
@@ -636,40 +637,22 @@ export default function PetDetailPage() {
 
           <Field label="Birthdate">
             <>
-              <input
-                type="date"
-                className="w-full border rounded-lg p-2"
-                value={form.dob}
-                onChange={(e) => setForm({ ...form, dob: e.target.value })}
-              />
+              <input type="date" className="w-full border rounded-lg p-2" value={form.dob} onChange={(e) => setForm({ ...form, dob: e.target.value })} />
               {ageLabel ? <p className="text-xs text-neutral-600 mt-1">{ageLabel}</p> : null}
             </>
           </Field>
 
           <Field label="Microchip #">
-            <input
-              className="w-full border rounded-lg p-2"
-              value={form.microchipNo}
-              onChange={(e) => setForm({ ...form, microchipNo: e.target.value })}
-            />
+            <input className="w-full border rounded-lg p-2" value={form.microchipNo} onChange={(e) => setForm({ ...form, microchipNo: e.target.value })} />
           </Field>
 
           <Field label="Temperament">
-            <input
-              className="w-full border rounded-lg p-2"
-              value={form.temperament}
-              onChange={(e) => setForm({ ...form, temperament: e.target.value })}
-            />
+            <input className="w-full border rounded-lg p-2" value={form.temperament} onChange={(e) => setForm({ ...form, temperament: e.target.value })} />
           </Field>
         </div>
 
         <Field label="Notes">
-          <textarea
-            className="w-full border rounded-lg p-2 mt-1"
-            rows={4}
-            value={form.notes}
-            onChange={(e) => setForm({ ...form, notes: e.target.value })}
-          />
+          <textarea className="w-full border rounded-lg p-2 mt-1" rows={4} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
         </Field>
 
         {err ? <p className="text-sm text-red-600 mt-3">{err}</p> : null}

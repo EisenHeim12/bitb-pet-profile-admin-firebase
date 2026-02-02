@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   collection,
   getCountFromServer,
@@ -17,6 +18,7 @@ import { db } from "@/lib/firebase";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import PetSearch from "@/components/PetSearch";
+import { Users, PawPrint, Stethoscope, Clock, Plus } from "lucide-react";
 
 type Reminder = {
   id: string;
@@ -27,6 +29,112 @@ type Reminder = {
   dueAt: Timestamp;
   status: "OPEN" | "DONE" | "SNOOZED";
 };
+
+function NavButton({
+  href,
+  label,
+  Icon,
+}: {
+  href: string;
+  label: string;
+  Icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
+}) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "inline-flex items-center gap-2",
+        "rounded-lg border px-3 py-2 text-sm",
+        "text-neutral-900 bg-white border-neutral-200",
+        "no-underline hover:no-underline",
+        "hover:bg-neutral-50 hover:border-neutral-300 transition",
+        "focus:outline-none focus:ring-2 focus:ring-black/20"
+      )}
+      title={label}
+      aria-label={label}
+    >
+      <Icon className="w-4 h-4" strokeWidth={2} />
+      <span>{label}</span>
+    </Link>
+  );
+}
+
+function StatCard({
+  title,
+  value,
+  loading,
+  href,
+  Icon,
+  addHref,
+}: {
+  title: string;
+  value: number;
+  loading: boolean;
+  href: string;
+  Icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
+  addHref?: string;
+}) {
+  const router = useRouter();
+  const open = () => router.push(href);
+
+  return (
+    <div
+      className={cn(
+        "relative border rounded-2xl p-4 transition cursor-pointer",
+        "hover:bg-neutral-50 hover:border-neutral-300",
+        "focus:outline-none focus:ring-2 focus:ring-black/20"
+      )}
+      role="link"
+      tabIndex={0}
+      onClick={open}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          open();
+        }
+      }}
+      title={`Open ${title}`}
+      aria-label={`Open ${title}`}
+    >
+      {/* Top row: title left, icon right (icon gets a fixed 7x7 box to align with +) */}
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm text-neutral-600">{title}</p>
+
+        <div className="w-7 h-7 flex items-center justify-center">
+          <Icon className="w-4 h-4 text-neutral-900" strokeWidth={2} />
+        </div>
+      </div>
+
+      {/* Value */}
+      {loading ? (
+        <p className="text-sm text-neutral-600 mt-2">Loading…</p>
+      ) : (
+        <p className="text-3xl font-semibold mt-1">{value}</p>
+      )}
+
+      {/* + button pinned bottom-right (same box size as icon container above) */}
+      {addHref ? (
+        <Link
+          href={addHref}
+          onClick={(e) => e.stopPropagation()}
+          className={cn(
+            "absolute right-4 bottom-4",
+            "w-7 h-7 rounded-full border border-neutral-200 bg-white",
+            "flex items-center justify-center",
+            "transition-transform",
+            "hover:scale-110 hover:border-neutral-300 hover:bg-neutral-50",
+            "focus:outline-none focus:ring-2 focus:ring-black/20",
+            "no-underline hover:no-underline"
+          )}
+          title={`Add ${title.slice(0, -1)}`}
+          aria-label={`Add ${title.slice(0, -1)}`}
+        >
+          <Plus className="w-4 h-4" strokeWidth={2} />
+        </Link>
+      ) : null}
+    </div>
+  );
+}
 
 export default function Dashboard() {
   const [counts, setCounts] = useState<{ clients: number; pets: number; vets: number } | null>(
@@ -54,7 +162,6 @@ export default function Dashboard() {
       setCountsLoading(true);
       setRemindersLoading(true);
 
-      // Build reminders query once
       const qRem = query(
         collection(db, "reminders"),
         where("status", "==", "OPEN"),
@@ -64,19 +171,16 @@ export default function Dashboard() {
       );
 
       try {
-        // ✅ Optional: show cached reminders instantly (if available)
-        // This helps after the first load (cache warm). If cache is empty, it will throw and we ignore it.
         try {
           const cacheSnap = await getDocsFromCache(qRem);
           if (!cancelled) {
             setReminders(cacheSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
-            setRemindersLoading(false); // show something while server request is in-flight
+            setRemindersLoading(false);
           }
         } catch {
           // ignore cache miss
         }
 
-        // ✅ REAL speed-up: run counts + server reminders in parallel (instead of sequential)
         const countsPromise = Promise.all([
           getCountFromServer(collection(db, "clients")),
           getCountFromServer(collection(db, "pets")),
@@ -127,26 +231,39 @@ export default function Dashboard() {
           {err ? <p className="text-sm text-red-600 mt-2">{err}</p> : null}
         </div>
 
-        <div className="flex items-center gap-3">
-          <Link className="text-sm underline" href="/clients">
-            Clients
-          </Link>
-          <Link className="text-sm underline" href="/pets">
-            Pets
-          </Link>
-          <Link className="text-sm underline" href="/reminders">
-            Reminders
-          </Link>
-          <Link className="text-sm underline" href="/vets">
-            Vets
-          </Link>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <NavButton href="/clients" label="Clients" Icon={Users} />
+          <NavButton href="/pets" label="Pets" Icon={PawPrint} />
+          <NavButton href="/reminders" label="Reminders" Icon={Clock} />
+          <NavButton href="/vets" label="Vets" Icon={Stethoscope} />
         </div>
       </div>
 
       <div className="grid md:grid-cols-3 gap-4">
-        <Stat title="Clients" value={counts?.clients ?? 0} loading={countsLoading} />
-        <Stat title="Pets" value={counts?.pets ?? 0} loading={countsLoading} />
-        <Stat title="Vets" value={counts?.vets ?? 0} loading={countsLoading} />
+        <StatCard
+          title="Clients"
+          value={counts?.clients ?? 0}
+          loading={countsLoading}
+          href="/clients"
+          addHref="/clients?new=1"
+          Icon={Users}
+        />
+        <StatCard
+          title="Pets"
+          value={counts?.pets ?? 0}
+          loading={countsLoading}
+          href="/pets"
+          addHref="/pets?new=1"
+          Icon={PawPrint}
+        />
+        <StatCard
+          title="Vets"
+          value={counts?.vets ?? 0}
+          loading={countsLoading}
+          href="/vets"
+          addHref="/vets?new=1"
+          Icon={Stethoscope}
+        />
       </div>
 
       <div className="grid lg:grid-cols-[1fr_420px] gap-4">
@@ -191,22 +308,9 @@ export default function Dashboard() {
       </div>
 
       <div className="text-xs text-neutral-500">
-        Tip: This prototype stores everything in Firestore. Keep it admin-only. Don’t be sloppy
-        with access control.
+        Tip: This prototype stores everything in Firestore. Keep it admin-only. Don’t be sloppy with
+        access control.
       </div>
     </main>
-  );
-}
-
-function Stat({ title, value, loading }: { title: string; value: number; loading: boolean }) {
-  return (
-    <div className="border rounded-2xl p-4">
-      <p className="text-sm text-neutral-600">{title}</p>
-      {loading ? (
-        <p className="text-sm text-neutral-600 mt-2">Loading…</p>
-      ) : (
-        <p className="text-3xl font-semibold mt-1">{value}</p>
-      )}
-    </div>
   );
 }
